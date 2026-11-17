@@ -1,0 +1,6 @@
+TriMeet - servidor (so o Levy, uma vez)
+
+De dois cliques em PUBLICAR.bat. Quando perguntar sobre o TURN,
+aperte N (ou S se quiser colar os codigos da Cloudflare).
+
+Depois disso, as atualizacoes do app chegam sozinhas.
