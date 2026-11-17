@@ -15,7 +15,10 @@ function colorOf(name) {
 const initialOf = (n) => (String(n || '').trim()[0] || '?').toUpperCase();
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const icon = (name, cls = '') => `<svg class="ic ${cls}"><use href="#i-${name}"/></svg>`;
-const orbHTML = (name) => `<span class="orb" style="--c:${colorOf(name)}">${esc(initialOf(name))}</span>`;
+const orbHTML = (name) => {
+  const av = typeof avatarOf === 'function' ? avatarOf(name) : null;
+  return av ? `<span class="orb img" style="--c:${colorOf(name)};--img:url(${av.url})"></span>` : `<span class="orb" style="--c:${colorOf(name)}">${esc(initialOf(name))}</span>`;
+};
 const DEFAULT_ICE = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
 const CONF = window.TRIMEET_CONFIG || { server: '', key: '' };
 
@@ -151,6 +154,7 @@ function refreshStepper() {
 async function initLogin() {
   const saved = await window.trimeet.loadConfig();
   if (saved) Object.assign(state.cfg, saved);
+  document.body.classList.add('ic-b');
   if (state.cfg.voicePref) state.pref = { ...state.pref, ...state.cfg.voicePref };
 
   const nameInput = $('#nameInput');
@@ -173,7 +177,9 @@ function renderLogin(pop) {
   const c = state.cfg;
   const orb = $('#meOrb');
   orb.style.setProperty('--c', c.name ? colorOf(c.name) : '#8a8f98');
-  $('#meInitial').innerHTML = c.name ? esc(initialOf(c.name)) : icon('user');
+  $('#meInitial').innerHTML = c.avatar ? '' : c.name ? esc(initialOf(c.name)) : icon('user');
+  orb.classList.toggle('img', !!c.avatar);
+  if (c.avatar) orb.style.setProperty('--img', `url(${c.avatar})`); else orb.style.removeProperty('--img');
   if (pop) { orb.classList.remove('pop'); orb.offsetWidth; orb.classList.add('pop'); }
   $('#enterBtn').disabled = !c.name;
   $('#enterTxt').textContent = !c.name ? 'Digite seu nome' : 'Entrar';
@@ -265,6 +271,7 @@ function myPresence() {
     deaf: v ? v.deaf : state.pref.deaf,
     live: state.shares.size > 0,
     cam: !!state.cam,
+    av: state.cfg.avatarH || null,
     pub: window.TMPerms?.myPub?.() || null,
   };
 }
@@ -292,10 +299,13 @@ function connectHub() {
       const list = m.peers.filter((n) => n !== state.myName);
       const added = list.filter((n) => !state.hubOnline.includes(n));
       // aviso "ficou online" só para quem chegou depois de mim
-      if (state.hubSeen) for (const n of added) window.trimeet.notify?.({ name: n, text: 'ficou online', color: colorOf(n) });
+      if (state.hubSeen && state.channelId) for (const n of added) window.trimeet.notify?.({ name: n, text: 'ficou online', color: colorOf(n) });
       state.hubSeen = true;
       state.hubOnline = list;
-      for (const n of [...state.presence.keys()]) if (!list.includes(n)) state.presence.delete(n);
+      for (const n of [...state.presence.keys()]) if (!list.includes(n)) {
+        if (state.channelId && state.presence.get(n)?.ch === state.channelId) chime('userLeave');
+        state.presence.delete(n);
+      }
       for (const n of added) { publishPresence(n); publishChannels(n); window.TMSound?.onHubPeerAdded(n); window.TMPerms?.onHubPeerAdded(n); }
       renderChannels();
     } else if (typeof m.type === 'string' && m.type.startsWith('perm-')) {
@@ -303,9 +313,20 @@ function connectHub() {
     } else if (typeof m.type === 'string' && m.type.startsWith('snd-')) {
       window.TMSound?.onHubMessage(m);
     } else if (m.type === 'presence' && m.from) {
+      const prev = state.presence.get(m.from);
+      if (state.channelId && m.from !== state.myName) {
+        if (m.ch === state.channelId && prev?.ch !== state.channelId) chime('userJoin');
+        else if (prev?.ch === state.channelId && m.ch !== state.channelId) chime('userLeave');
+        else if (m.ch === state.channelId && prev && !prev.live && m.live) chime('streamOn');
+      }
       state.presence.set(m.from, { ch: m.ch || null, inVoice: !!m.inVoice, muted: !!m.muted, deaf: !!m.deaf, live: !!m.live, cam: !!m.cam });
       if (m.pub) window.TMPerms?.notePresence(m.from, m.pub);
+      noteAvatar(m.from, m.av);
       renderChannels();
+    } else if (m.type === 'avatar-req' && m.from) {
+      if (state.cfg.avatar) hubSend({ type: 'avatar', to: m.from, h: state.cfg.avatarH, data: state.cfg.avatar });
+    } else if (m.type === 'avatar' && m.from) {
+      gotAvatar(m.from, m.h, m.data);
     } else if (m.type === 'channels') {
       let changed = false;
       for (const c of m.list || []) changed = mergeChannel(c) || changed;
@@ -355,9 +376,14 @@ function renderChannels() {
       el.querySelector('.ch-row').onclick = (e) => {
         if (e.target.closest('.ren')) { e.stopPropagation(); startEdit(c.id); return; }
         if (e.target.closest('.del')) { e.stopPropagation(); deleteChannel(c.id); return; }
+      };
+      // entrar na sala: dois cliques (um clique só não muda de sala sem querer)
+      el.querySelector('.ch-row').ondblclick = (e) => {
+        if (e.target.closest('.ren, .del')) return;
+        e.preventDefault();
         joinChannel(c.id);
       };
-      el.querySelector('.ch-row').ondblclick = (e) => { if (canDo('manageChannels')) { e.preventDefault(); startEdit(c.id); } };
+      el.querySelector('.ch-row').title = 'Dois cliques para entrar';
       el.querySelector('.ch-row').oncontextmenu = (e) => { e.preventDefault(); openChannelMenu(e, c.id); };
       // soltar uma pessoa arrastada aqui = mover para esta sala
       el.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/tm-member')) { e.preventDefault(); el.classList.add('drop'); } });
@@ -468,10 +494,74 @@ function deleteChannel(id) {
   renderChannels();
 }
 
+// ---- foto de perfil ----
+// guardada no PC (cfg.avatar, 160×160 JPEG); os outros recebem pelo saguão quando o "carimbo" (hash) muda
+const avatarCache = new Map(); // nome → { h, url }
+function avatarOf(name) {
+  if (name === state.myName || (!state.myName && name === state.cfg?.name)) return state.cfg?.avatar ? { h: state.cfg.avatarH, url: state.cfg.avatar } : null;
+  return avatarCache.get(name) || null;
+}
+function hashStr(t) { let h = 5381; for (let i = 0; i < t.length; i += 7) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + t.length.toString(36); }
+function noteAvatar(from, h) {
+  const cur = avatarCache.get(from);
+  if (!h) { if (cur) { avatarCache.delete(from); refreshAvatars(); } return; }
+  if (cur?.h === h || cur?.asked === h) return;
+  avatarCache.set(from, { ...(cur || {}), asked: h });
+  hubSend({ type: 'avatar-req', to: from });
+}
+function gotAvatar(from, h, data) {
+  if (typeof data !== 'string' || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(data) || data.length > 300000) return;
+  avatarCache.set(from, { h: String(h || hashStr(data)), url: data });
+  refreshAvatars();
+}
+function refreshAvatars() {
+  renderChannels(); renderPeople(); renderMe();
+  for (const el of $$('.tile, .member, .person')) {
+    const n = el.dataset.name, o = n && el.querySelector('.orb');
+    if (o && !o.closest('.me-orb')) o.outerHTML = orbHTML(n);
+  }
+}
+function pickAvatar() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/png,image/jpeg,image/webp,image/gif';
+  inp.onchange = () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    const img = new Image();
+    img.onload = () => {
+      const S = 160, c = document.createElement('canvas');
+      c.width = c.height = S;
+      const k = Math.min(img.width, img.height);
+      c.getContext('2d').drawImage(img, (img.width - k) / 2, (img.height - k) / 2, k, k, 0, 0, S, S);
+      URL.revokeObjectURL(url);
+      let q = .88, data = c.toDataURL('image/jpeg', q);
+      while (data.length > 60000 && q > .4) { q -= .12; data = c.toDataURL('image/jpeg', q); }
+      setAvatar(data);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); toast('Não consegui abrir essa imagem'); };
+    img.src = url;
+  };
+  inp.click();
+}
+function setAvatar(data) {
+  state.cfg.avatar = data || undefined;
+  state.cfg.avatarH = data ? hashStr(data) : undefined;
+  if (!data) { delete state.cfg.avatar; delete state.cfg.avatarH; }
+  window.trimeet.saveConfig(state.cfg);
+  if (data) hubSend({ type: 'avatar', h: state.cfg.avatarH, data });
+  publishPresence();
+  refreshAvatars();
+  renderLogin();
+  toast(data ? 'Foto atualizada' : 'Foto removida');
+}
+
 function renderMe() {
   const box = $('#meOrbSmall');
   if (!box || !state.myName) return;
-  if (box.dataset.n !== state.myName) { box.dataset.n = state.myName; box.innerHTML = orbHTML(state.myName); }
+  const key = state.myName + '|' + (state.cfg.avatarH || '');
+  if (box.dataset.n !== key) { box.dataset.n = key; box.innerHTML = orbHTML(state.myName); }
   $('#meName').textContent = state.myName;
   renderVoice();
 }
@@ -731,7 +821,6 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
       const dev = (sa.getSettings && sa.getSettings().deviceId) || '';
       opts.voiceFilter = dev === 'loopbackWithoutChrome';
       console.log('som do PC: deviceId=' + dev);
-      toast(opts.voiceFilter ? 'Som do PC sem as vozes da chamada' : `Som do PC inclui as vozes (motor ${String(window.trimeet.engine).split('.')[0]}, ${dev || 'sem id'})`);
     }
   } catch (e) {
     toast('Não foi possível capturar a tela: ' + e.message);
@@ -771,6 +860,7 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
   };
   setTimeout(sendThumb, 1500);
   share.thumbT = setInterval(sendThumb, 6000);
+  chime('streamOn');
   announceShares();
   renderDock();
   renderPeople();
@@ -826,6 +916,7 @@ function stopShare(id) {
     peer.senders.delete(id);
   }
   if (state.focusId === id) state.focusId = null;
+  chime('streamOff');
   removeTile(share.tile);
   announceShares();
   renderPeople();
@@ -871,7 +962,7 @@ function setVol(kind, name, value) {
   if (kind === 'sfx') {
     // só guarda: aplicado quando a pessoa tocar um efeito
   } else if (kind === 'voice') {
-    for (const v of state.voices.values()) if (v.from === name) v.audio.volume = vols.voice[name];
+    for (const v of state.voices.values()) if (v.from === name) v.audio.volume = voiceVolume(name);
   } else {
     for (const r of state.remotes.values()) if (r.from === name) {
       const video = r.tile.querySelector('video');
@@ -898,6 +989,7 @@ let ctxEl = null;
 function closeMenu() {
   if (!ctxEl) return;
   const el = ctxEl; ctxEl = null;
+  try { el._onClose && el._onClose(); } catch {}
   el.classList.add('leaving');
   setTimeout(() => el.remove(), 160);
 }
@@ -913,6 +1005,16 @@ function openMenu(e, build) {
   m.style.top = Math.max(10, y) + 'px';
   m.style.transformOrigin = `${e.clientX - x}px ${e.clientY - y}px`;
   ctxEl = m;
+  // conteúdo que chega depois (ex.: lista de microfones) não deixa o menu sair da tela
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => {
+      if (!m.isConnected) { ro.disconnect(); return; }
+      const h = m.getBoundingClientRect().height;
+      const top = parseFloat(m.style.top);
+      if (top + h > innerHeight - 10) m.style.top = Math.max(10, innerHeight - h - 10) + 'px';
+    });
+    ro.observe(m);
+  }
 }
 document.addEventListener('mousedown', (e) => { if (ctxEl && !ctxEl.contains(e.target)) closeMenu(); }, true);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
@@ -950,7 +1052,9 @@ function openPersonMenu(e, name, chId) {
     openMenu(e, (m) => {
       menuHead(m, name, 'Você');
       menuItem(m, state.voice?.muted || state.pref.muted ? 'mic' : 'mic-off', state.voice?.muted || state.pref.muted ? 'Desmutar' : 'Mutar', toggleMute);
-      menuItem(m, 'gear', 'Configurações de voz', () => $('#settingsBtn').click());
+      menuItem(m, 'user', state.cfg.avatar ? 'Trocar foto' : 'Colocar foto', pickAvatar);
+      if (state.cfg.avatar) menuItem(m, 'x', 'Remover foto', () => setAvatar(null));
+      menuItem(m, 'mic', 'Microfone e voz', () => setTimeout(() => openMicMenu(), 170));
       if (window.TMPerms) { menuSep(m); menuItem(m, 'shield', 'Servidor e cargos', () => TMPerms.openServer()); }
       if (canDo('moveMembers')) addMoveItems(m, name);
     });
@@ -1252,11 +1356,7 @@ function announceShares(to) {
 // ===================================================================
 function onRemoteShares(from, list) {
   const meta = new Map(list.map((s) => [s.id, { label: s.label, kind: s.kind || 'screen', vf: s.vf, eng: s.eng }]));
-  // diagnóstico: a transmissão manda o som do PC sem filtrar as vozes da chamada (você ouviria a própria voz)
-  state.vfWarned = state.vfWarned || new Set();
-  for (const s of list) {
-    if (s.vf === 0 && !state.vfWarned.has(s.id)) { state.vfWarned.add(s.id); toast(`O som da tela de ${from} não tira as vozes (motor ${s.eng || '?'})`); }
-  }
+
   state.remoteMeta.set(from, meta);
   for (const [id, r] of state.remotes) {
     if (r.from !== from) continue;
@@ -1334,6 +1434,7 @@ function makeTile({ id, name, label, kind, stream, mine }) {
   const t = document.createElement('div');
   t.className = 'tile' + (mine ? ' mine' : '') + (kind === 'camera' ? ' cam' : '');
   t.dataset.id = id;
+  t.dataset.name = name;
   t.style.viewTransitionName = 'tile-' + (++vtCount);
   t.dataset.order = document.querySelector(`.tile.card[data-id="${CSS.escape(id)}"]`)?.dataset.order || vtCount;
   t.innerHTML = `
@@ -1754,7 +1855,7 @@ function logout() {
 // ===================================================================
 let audioCtx = null;
 function actx() {
-  if (!audioCtx) audioCtx = new AudioContext();
+  if (!audioCtx) { audioCtx = new AudioContext(); setTimeout(applySfxOutput, 0); }
   if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   return audioCtx;
 }
@@ -1791,21 +1892,73 @@ function setSpeaking(name, on) {
 }
 
 // sons curtos de entrar/sair/mutar
+// ---- efeitos sonoros da interface (originais, no estilo dos do Discord: curtos, redondos e suaves) ----
+// cada nota: [frequência, início (s), duração (s), volume]
+const SFX = {
+  join:       { notes: [[587.33, 0, .16, 1], [880, .085, .34, .9]], tone: 'bell' },          // eu entrei na sala
+  leave:      { notes: [[880, 0, .14, .9], [587.33, .085, .32, .8]], tone: 'bell' },         // eu saí da sala
+  userJoin:   { notes: [[659.25, 0, .12, .8], [987.77, .07, .28, .75]], tone: 'soft' },      // alguém entrou na minha sala
+  userLeave:  { notes: [[783.99, 0, .12, .75], [523.25, .07, .3, .7]], tone: 'soft' },       // alguém saiu da minha sala
+  mute:       { notes: [[523.25, 0, .16, .75]], tone: 'soft' },   // toque único suave (escolhido pelo Levy)
+  unmute:     { notes: [[783.99, 0, .16, .75]], tone: 'soft' },
+  deafen:     { notes: [[622.25, 0, .08, .7], [415.3, .06, .1, .65], [311.13, .12, .2, .6]], tone: 'click' },
+  undeafen:   { notes: [[311.13, 0, .08, .6], [415.3, .06, .1, .65], [622.25, .12, .2, .7]], tone: 'click' },
+  streamOn:   { notes: [[523.25, 0, .1, .7], [659.25, .07, .1, .7], [1046.5, .14, .32, .7]], tone: 'bell' },
+  streamOff:  { notes: [[1046.5, 0, .1, .6], [659.25, .07, .1, .6], [523.25, .14, .28, .6]], tone: 'bell' },
+};
+const CHIME_ALIAS = { other: 'userJoin' };
+let sfxOut = null;
+function sfxBus(ctx) {
+  if (sfxOut && sfxOut.ctx === ctx) return sfxOut.input;
+  const input = ctx.createGain();
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200; lp.Q.value = .4;
+  // pequena "sala": eco curto e baixo, deixa o som mais macio
+  const dly = ctx.createDelay(.2); dly.delayTime.value = .045;
+  const fb = ctx.createGain(); fb.gain.value = .22;
+  const wet = ctx.createGain(); wet.gain.value = .18;
+  const master = ctx.createGain(); master.gain.value = .16;
+  input.connect(lp); lp.connect(master); lp.connect(dly); dly.connect(fb).connect(dly); dly.connect(wet).connect(master);
+  master.connect(ctx.destination);
+  sfxOut = { ctx, input };
+  return input;
+}
 function chime(kind) {
   try {
+    if (state.voice?.deaf && kind !== 'undeafen' && kind !== 'deafen') return;
+    const def = SFX[CHIME_ALIAS[kind] || kind];
+    if (!def) return;
     const ctx = actx();
-    const notes = { join: [523.25, 783.99], leave: [659.25, 392], mute: [440], unmute: [587.33], other: [698.46, 880] }[kind] || [600];
-    notes.forEach((f, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = 'sine'; o.frequency.value = f;
-      const t = ctx.currentTime + i * 0.09;
+    const out = sfxBus(ctx);
+    const outVol = state.cfg.audio?.outVol ?? 1;
+    const t0 = ctx.currentTime + .01;
+    for (const [f, at, dur, vol, fEnd] of def.notes) {
+      const t = t0 + at;
+      const g = ctx.createGain();
       g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.08, t + 0.015);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-      o.connect(g).connect(ctx.destination);
-      o.start(t); o.stop(t + 0.25);
-    });
+      g.gain.linearRampToValueAtTime(vol * outVol, t + (def.tone === 'click' ? .003 : .006));
+      g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+      g.connect(out);
+      const o1 = ctx.createOscillator();
+      o1.type = 'sine';
+      // leve "queda" de afinação no ataque: dá o toque de bolha
+      o1.frequency.setValueAtTime(f * (fEnd ? 1 : 1.025), t);
+      o1.frequency.exponentialRampToValueAtTime(fEnd || f, t + (fEnd ? dur * .8 : .03));
+      o1.connect(g);
+      const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+      o2.type = def.tone === 'bell' ? 'sine' : 'triangle';
+      const k2 = def.tone === 'bell' ? 2.01 : 1;
+      o2.frequency.setValueAtTime(f * k2, t);
+      if (fEnd) o2.frequency.exponentialRampToValueAtTime(fEnd * k2, t + dur * .8);
+      g2.gain.value = def.tone === 'bell' ? .22 : def.tone === 'soft' ? .12 : .18;
+      o2.connect(g2).connect(g);
+      o1.start(t); o2.start(t); o1.stop(t + dur + .05); o2.stop(t + dur + .05);
+    }
   } catch {}
+}
+// som da interface no mesmo dispositivo de saída das vozes
+function applySfxOutput() {
+  const id = state.cfg.audio?.outputId;
+  if (audioCtx && typeof audioCtx.setSinkId === 'function') audioCtx.setSinkId(id && id !== 'default' ? id : '').catch(() => {});
 }
 
 function applyVoiceParams(sender) {
@@ -1903,17 +2056,17 @@ function toggleDeaf() {
   const v = state.voice;
   if (!v) {
     state.pref.deaf = !state.pref.deaf;
-    if (state.pref.deaf) { state.pref.preDeafMuted = state.pref.muted; state.pref.muted = true; } else state.pref.muted = !!state.pref.preDeafMuted;
-    chime(state.pref.deaf ? 'mute' : 'unmute');
+    state.pref.muted = state.pref.deaf;
+    chime(state.pref.deaf ? 'deafen' : 'undeafen');
     savePref(); renderVoice(); return;
   }
   v.deaf = !v.deaf;
-  // ensurdecer também muta o microfone; ao voltar, mantém o mudo de antes (igual ao Discord)
-  if (v.deaf) { v.preDeafMuted = v.muted; v.muted = true; } else v.muted = !!v.preDeafMuted;
+  // desativar som desliga o microfone e o som de todos; reativar liga os dois de novo
+  v.muted = v.deaf;
   v.stream.getAudioTracks().forEach((t) => { t.enabled = !v.muted; });
   for (const rv of state.voices.values()) rv.audio.muted = v.deaf || isLocalMuted(rv.from);
   if (v.muted) setSpeaking(state.myName, false);
-  chime(v.deaf ? 'mute' : 'unmute');
+  chime(v.deaf ? 'deafen' : 'undeafen');
   sendVoiceState();
   savePref();
   renderVoice();
@@ -1926,14 +2079,13 @@ function attachVoice(from, stream) {
   audio.autoplay = true;
   audio.srcObject = stream;
   audio.muted = !state.voice || state.voice.deaf; // só escuta quem também entrou na voz
-  audio.volume = getVol('voice', from);
+  audio.volume = voiceVolume(from);
   document.body.appendChild(audio);
   if (window.TMAudio && state.cfg.audio?.outputId) TMAudio.setOutputDevice(audio, state.cfg.audio.outputId);
   audio.play().catch(() => {});
   const meter = makeMeter(stream, (on) => setSpeaking(from, on));
   state.voices.set(stream.id, { from, stream, audio, meter });
   stream.onremovetrack = () => { if (!stream.getTracks().length) removeVoice(stream.id); };
-  if (state.voice) chime('other');
 }
 
 function removeVoice(id) {
@@ -1944,7 +2096,6 @@ function removeVoice(id) {
   v.audio.srcObject = null;
   v.audio.remove();
   setSpeaking(v.from, false);
-  if (state.voice) chime('leave');
 }
 
 function renderVoice() {
@@ -1961,17 +2112,32 @@ function renderVoice() {
   dfb.title = deaf ? 'Ativar som' : 'Desativar som';
 }
 
-function myThreshold() {
-  const sens = state.cfg.audio?.sensitivity;
-  return window.TMSettings && sens != null ? TMSettings.thresholdFor(sens) : 0.035;
+// configuração de voz (com migração: quem estava no "Natural" sem escolher passa para o Isolamento de voz)
+function audioCfg() {
+  const a = state.cfg.audio || (state.cfg.audio = {});
+  if (!a.v2) {
+    a.v2 = true;
+    a.mode = 'isolamento-forte';
+    a.autoSens = true;
+    if (typeof a.sensDb !== 'number') a.sensDb = -50;
+    window.trimeet.saveConfig(state.cfg);
+  }
+  if (!a.mode || !window.TMAudio?.modes[a.mode]) a.mode = 'isolamento-forte';
+  if (typeof a.autoSens !== 'boolean') a.autoSens = true;
+  if (typeof a.sensDb !== 'number') a.sensDb = -50;
+  if (typeof a.outVol !== 'number') a.outVol = 1;
+  return a;
 }
+function saveAudio() { window.trimeet.saveConfig(state.cfg); }
+function myThreshold() { return 0.008; } // o portão já corta o que não é voz; isto só acende o anel de "falando"
+function voiceVolume(from) { return Math.max(0, Math.min(1, getVol('voice', from) * audioCfg().outVol)); }
 
-// microfone: usa o módulo de áudio (modos de voz) quando disponível
+// microfone: modo de voz + portão de voz (sensibilidade)
 async function getMic() {
-  const a = state.cfg.audio || {};
-  if (window.TMAudio) return TMAudio.getMicStream({ mode: a.mode || 'natural', deviceId: a.inputId || undefined });
+  const a = audioCfg();
+  if (window.TMAudio) return TMAudio.getMicStream({ mode: a.mode, deviceId: a.inputId || undefined, gate: { auto: a.autoSens, thrDb: a.sensDb } });
   const s = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, channelCount: 1, deviceId: a.inputId ? { exact: a.inputId } : undefined },
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, deviceId: a.inputId ? { exact: a.inputId } : undefined },
     video: false,
   });
   s.getAudioTracks().forEach((t) => { t.contentHint = 'speech'; });
@@ -1984,8 +2150,11 @@ function releaseMic(stream) {
 }
 // configurações de áudio mudaram: troca o microfone sem sair da sala
 window.addEventListener('tm-audio-change', async (e) => {
-  state.cfg.audio = { ...(state.cfg.audio || {}), ...(e.detail || {}) };
+  state.cfg.audio = { ...audioCfg(), ...(e.detail || {}) };
+  saveAudio();
+  if (e.detail && e.detail.restart === false) return;
   if (window.TMAudio) for (const rv of state.voices.values()) TMAudio.setOutputDevice(rv.audio, state.cfg.audio.outputId);
+  applySfxOutput();
   const v = state.voice;
   if (!v) return;
   let ns;
@@ -2001,6 +2170,8 @@ window.addEventListener('tm-audio-change', async (e) => {
 });
 
 $('#micBtn').onclick = toggleMute;
+$('#meOrbSmall').onclick = pickAvatar;
+$('#meOrb').onclick = () => { if (state.cfg.name) pickAvatar(); };
 $('#deafBtn').onclick = toggleDeaf;
 document.addEventListener('keydown', (e) => {
   if ($('#room').classList.contains('hidden')) return;
@@ -2015,20 +2186,21 @@ $('#homeBtn').oncontextmenu = (e) => {
     menuHead(m, state.myName, window.TMPerms?.isOwner() ? 'Dono do servidor' : 'Servidor');
     if (window.TMPerms) menuItem(m, 'shield', 'Servidor e cargos', () => TMPerms.openServer());
     menuSep(m);
-    menuItem(m, 'leave', 'Sair do TriMeet', () => $('#homeBtn').click(), { danger: true });
+    menuItem(m, 'leave', 'Sair do TriMeet', () => $('#homeBtn').ondblclick(), { danger: true });
   });
 };
-$('#settingsBtn').onclick = () => { if (window.TMSettings) TMSettings.open(); else toast('Configurações chegam na próxima versão'); };
 setInterval(() => send({ type: 'ping' }), 25000);
 $('#shareBtn').onclick = openShareModal;
 $('#closeModal').onclick = closeShareModal;
 $('#cancelShare').onclick = closeShareModal;
 $('#goShare').onclick = goShare;
 $('#leaveBtn').onclick = () => leaveChannel();
-$('#homeBtn').onclick = () => {
+// voltar ao início: dois cliques no "TriMeet"
+$('#homeBtn').ondblclick = () => {
   if (state.shares.size && !confirm('Sair do TriMeet vai parar sua transmissão. Continuar?')) return;
   logout();
 };
+$('#homeBtn').title = 'Dois cliques para voltar ao início';
 $('#camBtn').onclick = toggleCamera;
 $('#sfxBtn').onclick = () => window.TMSound ? TMSound.togglePanel($('#sfxBtn')) : toast('Efeitos chegam na próxima versão');
 window.TMSound?.init({

@@ -500,7 +500,8 @@ body.idle #stage { cursor: none; }
 .member .orb::after { display: none; }
 .member .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member.me .nm { color: var(--text); }
-.member .mi { display: inline-flex; gap: 3px; color: var(--live); }
+.member .mi { display: inline-flex; flex: none; gap: 3px; color: var(--live); }
+.member .mi .ic, .person .vic .ic { flex: none; overflow: visible; }
 .member .mi .ic { width: 14px; height: 14px; }
 .member .lv { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; color: #fff; background: var(--live); padding: 2px 6px; border-radius: 6px; }
 .member.speaking .orb { box-shadow: 0 0 0 2px var(--ok), 0 0 12px rgba(50, 215, 75, .5); }
@@ -689,3 +690,59 @@ body.idle #stage { cursor: auto; }
 .link.upd-pill { height: 30px; padding: 0 14px 0 10px; border-radius: 999px; background: var(--ok); color: #031407; font-weight: 650; font-size: 12.5px; }
 .link.upd-pill:hover { color: #031407; background: #4be062; }
 .link.upd-pill .ic { width: 15px; height: 15px; }
+
+/* ==========================================================================
+   11.0: menus de voz (botão direito no microfone / fone)
+   ========================================================================== */
+.ctx-menu.vm-menu { min-width: 290px; max-width: 320px; max-height: calc(100vh - 20px); overflow-y: auto; }
+.vm-list { display: flex; flex-direction: column; gap: 2px; min-height: 38px; }
+.vm-radio { height: auto; min-height: 38px; padding: 7px 10px; }
+.vm-radio .vm-l { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.vm-radio .vm-l span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vm-radio .vm-l small { font-size: 11.5px; color: var(--text-3); }
+.vm-dot { flex: none; width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1.6px var(--text-3);
+  transition: box-shadow 220ms var(--spring); }
+.vm-radio.on .vm-dot { box-shadow: inset 0 0 0 5px #fff; }
+.vm-radio.on { background: rgba(255, 255, 255, .06); }
+.vm-sens { padding: 8px 10px 10px; border-radius: 12px; background: rgba(255, 255, 255, .04); margin: 2px 0; }
+.vm-sens-top { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
+.vm-auto { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.vm-auto .cm-check.on { background: var(--ok, #32d74b); }
+.vm-meter { position: relative; height: 22px; border-radius: 8px; background: rgba(255, 255, 255, .06); overflow: hidden; }
+.vm-lvl { position: absolute; inset: 0 auto 0 0; width: 0; background: rgba(255, 214, 10, .55); transition: width 60ms linear, background 120ms; }
+.vm-lvl.open { background: rgba(50, 215, 75, .75); }
+.vm-thr { position: absolute; top: 2px; bottom: 2px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); transition: left 120ms ease-out; pointer-events: none; }
+.vm-meter input[type=range] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: ew-resize; }
+.vm-sens.auto .vm-meter input[type=range] { pointer-events: none; }
+.vm-sens.auto .vm-thr { background: rgba(255, 255, 255, .55); }
+.vm-hint { display: block; margin-top: 8px; font-size: 11.5px; color: var(--text-3); }
+
+/* foto de perfil */
+.orb.img { background: var(--img) center / cover no-repeat, #1a2140; color: transparent; text-shadow: none; }
+.orb.img::after { opacity: .35; }
+#meOrbSmall { cursor: pointer; }
+#meOrbSmall:hover .orb { transform: scale(1.06); }
+
+/* barra lateral 10% mais larga (284 → 312) */
+.sidebar { width: 312px; }
+.main, body.idle .main { left: 326px; }
+#room.side-collapsed .main { left: 0; }
+.me-panel { gap: 4px; }
+
+/* ---------- ícones da barra lateral: estilo cápsula (escolhido pelo Levy) ---------- */
+
+body.ic-b .ch-row { height: 46px; }
+body.ic-b .ch-row .ic { box-sizing: content-box; width: 17px; height: 17px; padding: 6px; border-radius: 10px; color: #fff; stroke-width: 2;
+  background: rgba(255, 255, 255, .09); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1); }
+body.ic-b .ch.active .ch-row .ic { background: rgba(50, 215, 75, .22); color: #7ef29a; box-shadow: inset 0 0 0 1px rgba(50, 215, 75, .35); }
+body.ic-b .me-panel .btn.sm { width: 36px; height: 36px; border-radius: 12px; color: #fff; background: rgba(255, 255, 255, .08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
+body.ic-b .me-panel .btn.sm .ic { width: 19px; height: 19px; stroke-width: 2; }
+body.ic-b .me-panel .btn.sm.off { background: rgba(255, 69, 58, .18); color: #ff6961; }
+body.ic-b .side-label .ic, body.ic-b #sideToggle .ic { width: 19px; height: 19px; stroke-width: 2; color: #fff; }
+body.ic-b .member .mi .ic, body.ic-b .person .vic .ic { width: 16px; height: 16px; stroke-width: 2.1; }
+
+
+/* nomes das salas e pessoas mais legíveis */
+body[class*='ic-'] .ch-row { color: #e5e5ea; font-size: 14.5px; }
+body[class*='ic-'] .member { color: #c7c7cc; }

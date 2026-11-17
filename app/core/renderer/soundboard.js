@@ -7,12 +7,8 @@
   const MAX_SECONDS = 15;
   const COOLDOWN = 1500;
   const EMOJIS = ['😂', '🤣', '👏', '🔥', '💀', '😱', '🥁', '🎺', '📯', '🔔', '🤡', '👀', '🐐', '💥', '🎉', '😴'];
-  const BUILTIN = [
-    { id: 'b-sino', name: 'Sino', emoji: '🔔', builtin: true },
-    { id: 'b-tambor', name: 'Tambor', emoji: '🥁', builtin: true },
-    { id: 'b-buzina', name: 'Buzina', emoji: '📯', builtin: true },
-    { id: 'b-festa', name: 'Festa', emoji: '🎉', builtin: true },
-  ];
+  // sem efeitos prontos: cada um adiciona os seus (pedido do Levy)
+  const BUILTIN = [];
 
   let api = null;
   const lib = new Map();      // id -> { id, name, emoji, by, ts, deleted, size, data }

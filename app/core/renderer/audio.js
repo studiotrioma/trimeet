@@ -7,11 +7,13 @@
   const RNN_DIR = 'vendor/rnnoise/';
   const RNN_ID = '@sapphi-red/web-noise-suppressor/rnnoise';
 
+  // nomes estilo Discord. O id antigo continua o mesmo para não quebrar configurações salvas.
   const modes = {
-    natural: { label: 'Natural', constraints: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } },
-    isolamento: { label: 'Isolamento', constraints: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } },
-    'isolamento-forte': { label: 'Isolamento forte', constraints: { echoCancellation: true, noiseSuppression: false, autoGainControl: true }, rnnoise: true },
+    'isolamento-forte': { label: 'Isolamento de voz', hint: 'Rede neural: tira teclado, ventilador e ruídos', constraints: { echoCancellation: true, noiseSuppression: false, autoGainControl: true }, rnnoise: true },
+    isolamento: { label: 'Padrão', hint: 'Redução de ruído leve', constraints: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } },
+    natural: { label: 'Estúdio', hint: 'Som puro do microfone, sem tratamento', constraints: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } },
   };
+  const DEFAULT_MODE = 'isolamento-forte';
 
   let ctx = null;
   let workletReady = null;
@@ -43,7 +45,15 @@
 
   async function ensureRnnoise(c) {
     if (!wasmBinary) {
-      const bin = await loadBinary(RNN_DIR + (simdSupported() ? 'rnnoise_simd.wasm' : 'rnnoise.wasm'));
+      let bin;
+      if (window.TM_RNNOISE_B64 && simdSupported()) {
+        const raw = atob(window.TM_RNNOISE_B64);
+        const u8 = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+        bin = u8.buffer;
+      } else {
+        bin = await loadBinary(RNN_DIR + (simdSupported() ? 'rnnoise_simd.wasm' : 'rnnoise.wasm'));
+      }
       // confere aqui se o WASM pode rodar (CSP); se não puder, cai no isolamento do Chromium
       await WebAssembly.compile(bin);
       wasmBinary = bin;
@@ -52,13 +62,20 @@
     await workletReady;
   }
 
+  let gateReady = null;
+  function ensureGate(c) {
+    if (!gateReady) gateReady = c.audioWorklet.addModule('gate-worklet.js');
+    return gateReady;
+  }
+
   function release(stream) {
     if (stream && typeof stream._tmRelease === 'function') stream._tmRelease();
     else if (stream) stream.getTracks().forEach((t) => t.stop());
   }
 
-  async function getMicStream({ mode = 'natural', deviceId } = {}) {
-    const m = modes[mode] || modes.natural;
+  // gate = { auto: true, thrDb: -50 } (sensibilidade automática ou manual)
+  async function getMicStream({ mode = DEFAULT_MODE, deviceId, gate } = {}) {
+    let m = modes[mode] || modes[DEFAULT_MODE];
     const audio = { ...m.constraints, channelCount: 1, sampleRate: 48000 };
     if (deviceId && deviceId !== 'default') audio.deviceId = { exact: deviceId };
     let raw;
@@ -71,42 +88,64 @@
     }
     raw.getAudioTracks().forEach((t) => { t.contentHint = 'speech'; });
 
-    if (!m.rnnoise) {
-      raw._tmRelease = () => raw.getTracks().forEach((t) => t.stop());
-      raw._tmMode = mode;
-      return raw;
-    }
-
-    // isolamento forte: mic → passa-alta 80 Hz → RNNoise → saída
+    // mic → passa-alta 80 Hz → (RNNoise) → portão de voz → saída
+    const c = getCtx();
+    const nodes = [];
+    let fallback = false;
     try {
-      const c = getCtx();
-      await ensureRnnoise(c);
       const src = c.createMediaStreamSource(raw);
       const hp = c.createBiquadFilter();
       hp.type = 'highpass';
       hp.frequency.value = 80;
-      const rnn = new AudioWorkletNode(c, RNN_ID, { processorOptions: { maxChannels: 1, wasmBinary: wasmBinary.slice(0) }, channelCount: 1, channelCountMode: 'explicit' });
+      nodes.push(src, hp);
+      let last = src.connect(hp);
+      if (m.rnnoise) {
+        try {
+          await ensureRnnoise(c);
+          const rnn = new AudioWorkletNode(c, RNN_ID, { processorOptions: { maxChannels: 1, wasmBinary: wasmBinary.slice(0) }, channelCount: 1, channelCountMode: 'explicit' });
+          nodes.push(rnn);
+          last = last.connect(rnn);
+        } catch (e) {
+          console.warn('RNNoise indisponível', e);
+          fallback = true;
+        }
+      }
+      let gateNode = null;
+      try {
+        await ensureGate(c);
+        gateNode = new AudioWorkletNode(c, 'tm-gate', { channelCount: 1, channelCountMode: 'explicit', numberOfOutputs: 1, outputChannelCount: [1] });
+        gateNode.port.postMessage({ auto: gate?.auto !== false, thrDb: typeof gate?.thrDb === 'number' ? gate.thrDb : -50 });
+        nodes.push(gateNode);
+        last = last.connect(gateNode);
+      } catch (e) { console.warn('portão de voz indisponível', e); }
       const dest = c.createMediaStreamDestination();
       dest.channelCount = 1;
-      src.connect(hp).connect(rnn).connect(dest);
+      last.connect(dest);
       const out = dest.stream;
       out.getAudioTracks().forEach((t) => { t.contentHint = 'speech'; });
       out._tmRaw = raw;
-      out._tmMode = mode;
+      out._tmMode = fallback ? 'isolamento' : mode;
+      out._tmFallback = fallback;
+      const listeners = new Set();
+      if (gateNode) gateNode.port.onmessage = (e) => { for (const f of listeners) f(e.data); };
+      out._tmGate = {
+        set(p) { if (gateNode) gateNode.port.postMessage(p); },
+        onLevel(f) { listeners.add(f); return () => listeners.delete(f); },
+        active: !!gateNode,
+      };
       out._tmRelease = () => {
-        try { rnn.port.postMessage('destroy'); } catch {}
-        try { src.disconnect(); hp.disconnect(); rnn.disconnect(); } catch {}
+        listeners.clear();
+        for (const n of nodes) { try { if (n.port) n.port.postMessage('destroy'); } catch {} try { n.disconnect(); } catch {} }
         raw.getTracks().forEach((t) => t.stop());
         out.getTracks().forEach((t) => t.stop());
       };
       return out;
     } catch (e) {
-      console.warn('RNNoise indisponível, usando isolamento do Chromium', e);
-      raw.getTracks().forEach((t) => t.stop());
-      const fb = await getMicStream({ mode: 'isolamento', deviceId });
-      fb._tmMode = 'isolamento';
-      fb._tmFallback = true;
-      return fb;
+      console.warn('tratamento de voz indisponível, usando o microfone direto', e);
+      for (const n of nodes) { try { n.disconnect(); } catch {} }
+      raw._tmRelease = () => raw.getTracks().forEach((t) => t.stop());
+      raw._tmMode = mode;
+      return raw;
     }
   }
 
@@ -154,5 +193,5 @@
     return { stop() { cancelAnimationFrame(raf); try { src.disconnect(); } catch {} } };
   }
 
-  window.TMAudio = { modes, getMicStream, release, listDevices, setOutputDevice, meter };
+  window.TMAudio = { modes, DEFAULT_MODE, getMicStream, release, listDevices, setOutputDevice, meter };
 })();

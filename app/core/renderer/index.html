@@ -45,8 +45,8 @@
       <symbol id="i-dice" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 8h.01M16 8h.01M12 12h.01M8 16h.01M16 16h.01"/></symbol>
       <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
       <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M15 9.3V6a3 3 0 0 0-5.7-1.3M9 9v2a3 3 0 0 0 4.9 2.3M5 11a7 7 0 0 0 11.4 5.4M19 11a7 7 0 0 1-.6 2.8M12 18v3M3 3l18 18"/></symbol>
-      <symbol id="i-headset" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="2"/><rect x="17" y="14" width="4" height="7" rx="2"/></symbol>
-      <symbol id="i-deaf" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 12.7-6.5M20 12v3"/><rect x="3" y="14" width="4" height="7" rx="2"/><rect x="17" y="14" width="4" height="7" rx="2"/><path d="M3 3l18 18"/></symbol>
+      <symbol id="i-headset" viewBox="0 0 24 24"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></symbol>
+      <!-- fone / fone riscado: desenho baseado nos ícones Lucide (licença ISC) --><symbol id="i-deaf" viewBox="0 0 24 24"><path d="M21 14h-1.343"/><path d="M9.128 3.47A9 9 0 0 1 21 12v3.343"/><path d="m2 2 20 20"/><path d="M20.414 20.414A2 2 0 0 1 19 21h-1a2 2 0 0 1-2-2v-3"/><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 2.636-6.364"/></symbol>
       <symbol id="i-phone-off" viewBox="0 0 24 24"><path d="M3.5 13.5c4.7-4.7 12.3-4.7 17 0l-1.8 2.5-3.2-1.2v-2.6a10 10 0 0 0-7 0v2.6L5.3 16z"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
       <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></symbol>
@@ -123,7 +123,6 @@
         <button id="deafBtn" class="btn icon sm" title="Desativar som"><svg class="ic"><use href="#i-headset"/></svg></button>
         <button id="camBtn" class="btn icon sm" title="Ligar câmera"><svg class="ic"><use href="#i-camera-off"/></svg></button>
         <button id="sfxBtn" class="btn icon sm" title="Efeitos sonoros"><svg class="ic"><use href="#i-audio"/></svg></button>
-        <button id="settingsBtn" class="btn icon sm" title="Configurações"><svg class="ic"><use href="#i-gear"/></svg></button>
       </div>
     </aside>
 
@@ -240,8 +239,10 @@
   <div id="toast" class="toast glass hidden" data-glass="999"></div>
 
   <script src="config.js"></script>
+  <script src="vendor/rnnoise/rnnoise-simd.js"></script>
   <script src="audio.js"></script>
   <script src="settings.js"></script>
+  <script src="voicemenu.js"></script>
   <script src="soundboard.js"></script>
   <script src="vendor/nacl/nacl-fast.min.js"></script>
   <script src="perms.js"></script>
