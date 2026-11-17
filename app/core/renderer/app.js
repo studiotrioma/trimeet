@@ -838,6 +838,10 @@ $('#closeModal').onclick = closeShareModal;
 $('#cancelShare').onclick = closeShareModal;
 $('#goShare').onclick = goShare;
 $('#leaveBtn').onclick = leave;
+$('#homeBtn').onclick = () => {
+  if (state.shares.size && !confirm('Voltar ao início vai parar sua transmissão. Continuar?')) return;
+  leave();
+};
 $('#statsBtn').onclick = () => {
   const on = document.body.classList.toggle('show-stats');
   $('#statsBtn').classList.toggle('on', on);

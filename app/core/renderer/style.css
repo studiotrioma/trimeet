@@ -423,3 +423,9 @@ body.idle #stage { cursor: none; }
 .name-field.need { animation: nudge 1.8s ease-in-out infinite; }
 @keyframes nudge { 0%, 100% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.16); } 50% { box-shadow: inset 0 0 0 1.5px rgba(70,200,220,.7), 0 0 0 5px rgba(70,200,220,.12); } }
 .room-field input { font-family: "TM Mono", monospace; }
+
+/* ---------- voltar ao início pelo símbolo ---------- */
+.home-btn { height: 40px; margin-left: -10px; padding: 0 12px 0 10px; border-radius: 999px; color: var(--text);
+  transition: background 200ms ease, transform 100ms ease-out; }
+.home-btn:hover { background: rgba(255,255,255,.08); }
+.home-btn:active { transform: scale(.96); }
