@@ -746,3 +746,46 @@ body.ic-b .member .mi .ic, body.ic-b .person .vic .ic { width: 16px; height: 16p
 /* nomes das salas e pessoas mais legíveis */
 body[class*='ic-'] .ch-row { color: #e5e5ea; font-size: 14.5px; }
 body[class*='ic-'] .member { color: #c7c7cc; }
+
+/* ==========================================================================
+   Site (navegador): campo de convite e compartilhar pela janela do navegador
+   ========================================================================== */
+.invite-field { height: 52px; margin: -4px 0 14px; }
+.invite-field input { font-family: "TM Mono", monospace; font-size: 15px; letter-spacing: .02em; }
+#shareModal.web #srcTabs, #shareModal.web #sources { display: none; }
+
+/* ==========================================================================
+   Celular (site): gaveta de salas, rodapé com voz, tudo com dedo
+   ========================================================================== */
+.m-only { display: none !important; }
+html.is-mobile .m-only { display: inline-flex !important; }
+html.is-mobile, html.is-mobile body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+html.is-mobile button, html.is-mobile .ch-row, html.is-mobile .tile { touch-action: manipulation; }
+html.is-mobile .login-card { width: min(420px, calc(100vw - 28px)); padding: 22px; }
+html.is-mobile #room .main, html.is-mobile #room.side-collapsed .main { left: 0; }
+html.is-mobile .topbar { top: calc(8px + env(safe-area-inset-top)); left: 8px; right: 8px; height: 50px; padding: 0 8px 0 6px; }
+html.is-mobile .topbar #people, html.is-mobile .topbar #chanSep { display: none; }
+html.is-mobile #sideToggle { width: 40px; height: 40px; }
+html.is-mobile .sidebar { position: fixed; z-index: 60; top: calc(8px + env(safe-area-inset-top)); bottom: calc(8px + env(safe-area-inset-bottom)); left: 8px;
+  width: min(86vw, 340px); box-shadow: 0 30px 80px rgba(0, 0, 0, .7); }
+html.is-mobile #room.side-collapsed .sidebar { opacity: 0; transform: translateX(-105%); }
+html.is-mobile #room:not(.side-collapsed)::after { content: ''; position: fixed; inset: 0; z-index: 55; background: rgba(0, 0, 0, .55);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: fade 260ms ease both; }
+@keyframes fade { from { opacity: 0; } }
+html.is-mobile .ch-row { height: 50px; }
+html.is-mobile .member { min-height: 40px; }
+html.is-mobile .dock { bottom: calc(10px + env(safe-area-inset-bottom)); gap: 5px; padding: 6px; max-width: calc(100vw - 16px); }
+html.is-mobile .dock .btn { height: 48px; }
+html.is-mobile .dock .btn.icon { width: 48px; }
+html.is-mobile .dock .btn.primary { padding: 0 14px; font-size: 0; gap: 0; }
+html.is-mobile .dock .btn.primary .ic { width: 22px; height: 22px; }
+html.is-mobile .dock .btn.stop-pill, html.is-mobile .dock .btn.ghost-pill { font-size: 0; gap: 0; padding: 0 14px; }
+html.is-mobile .dock #mMic.off, html.is-mobile .dock #mDeaf.off { background: rgba(255, 69, 58, .18) !important; color: var(--live); }
+html.is-mobile .dock #mCam.on { background: rgba(50, 215, 75, .16); color: var(--ok); }
+html.no-share #shareBtn { display: none !important; }
+html.is-mobile .stage { padding: calc(66px + env(safe-area-inset-top)) 6px calc(80px + env(safe-area-inset-bottom)); }
+html.is-mobile .modal-card { width: calc(100vw - 20px) !important; max-height: calc(100vh - 40px); overflow-y: auto; }
+html.is-mobile .ctx-menu { max-width: calc(100vw - 20px); }
+html.is-mobile .sfx-panel { left: 10px !important; right: 10px !important; width: auto !important; }
+html.is-mobile #toast { bottom: calc(90px + env(safe-area-inset-bottom)); }
+html.is-mobile .ctx-menu.vm-menu { min-width: 0; width: min(320px, calc(100vw - 20px)); }

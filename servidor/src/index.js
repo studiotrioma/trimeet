@@ -6,11 +6,92 @@ const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json', ...cors } });
 const cleanRoom = (r) => String(r || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40);
 
+// ---------------------------------------------------------------------------
+// Site: a mesma interface do app (app/core/renderer no GitHub), sempre na mesma versão.
+// Quem entra pelo site precisa do código de convite (segredo INVITE_CODE no servidor).
+// ---------------------------------------------------------------------------
+const TYPES = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', json: 'application/json',
+  svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', wasm: 'application/wasm', mp3: 'audio/mpeg', ogg: 'audio/ogg' };
+const typeOf = (p) => TYPES[(p.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
+const cleanPath = (p) => (/^[a-zA-Z0-9._\/-]+$/.test(p) && !p.includes('..') ? p : null);
+
+async function fromRepo(env, path, { cacheTtl = 60 } = {}) {
+  const base = env.WEB_BASE || String(env.UPDATES_BASE || '').replace(/\/update\/?$/, '');
+  if (!base) return null;
+  const r = await fetch(`${base}/${path}`, { cf: { cacheTtl, cacheEverything: true } });
+  return r.ok ? r : null;
+}
+const page = (body, type, extra = {}) => new Response(body, { headers: { 'content-type': type, 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff', ...extra } });
+
+function sameText(a, b) {
+  a = String(a || ''); b = String(b || '');
+  let d = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
+
+async function serveWeb(req, url, env) {
+  const p = url.pathname;
+  if (req.method === 'POST' && p === '/web-auth') {
+    let code = '';
+    try { code = (await req.json()).code; } catch {}
+    if (!env.INVITE_CODE || !code || !sameText(String(code).trim().toLowerCase(), String(env.INVITE_CODE).trim().toLowerCase())) {
+      await new Promise((r) => setTimeout(r, 600)); // atrasa tentativas
+      return json({ error: 'convite inválido' }, 403);
+    }
+    return json({ key: env.APP_KEY || '' });
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') return null;
+
+  if (p === '/' || p === '/index.html') {
+    const r = await fromRepo(env, 'app/core/renderer/index.html');
+    if (!r) return page('TriMeet ok', 'text/plain');
+    let html = await r.text();
+    html = html.replace('<head>', `<head>
+  <base href="/app/" />
+  <script src="/web/shim.js"></script>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.png" />
+  <link rel="apple-touch-icon" href="/icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`);
+    return page(html, TYPES.html);
+  }
+  if (p === '/version.json') {
+    const r = await fromRepo(env, 'app/core/version.json', { cacheTtl: 30 });
+    return r ? page(r.body, TYPES.json) : json({ version: null });
+  }
+  if (p === '/icon.png') {
+    const r = await fromRepo(env, 'app/build/icon.png', { cacheTtl: 3600 });
+    return r ? new Response(r.body, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' } }) : null;
+  }
+  if (p === '/manifest.webmanifest') {
+    return page(JSON.stringify({
+      name: 'TriMeet', short_name: 'TriMeet', start_url: '/', display: 'standalone', background_color: '#000000', theme_color: '#000000',
+      icons: [{ src: '/icon.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }],
+    }), 'application/manifest+json');
+  }
+  if (p === '/app/config.js') {
+    // nunca entrega a chave do servidor para o site: ela vem do código de convite
+    return page(`window.TRIMEET_CONFIG = { server: location.origin, key: localStorage.getItem('trimeet.key') || '' };`, TYPES.js);
+  }
+  let repoPath = null;
+  if (p.startsWith('/app/')) repoPath = cleanPath(p.slice(5)) && 'app/core/renderer/' + p.slice(5);
+  else if (p.startsWith('/web/')) repoPath = cleanPath(p.slice(5)) && 'web/' + p.slice(5);
+  if (!repoPath) return null;
+  const r = await fromRepo(env, repoPath);
+  if (!r) return new Response('não encontrado', { status: 404 });
+  return page(r.body, typeOf(repoPath));
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
-    if (url.pathname === '/') return new Response('TriMeet ok', { headers: cors });
+    // ---- TriMeet no navegador (computador e celular) ----
+    const web = await serveWeb(req, url, env);
+    if (web) return web;
 
     // atualizações do app: vêm do repositório no GitHub (publicadas pelo Claude)
     if (url.pathname.startsWith('/update/')) {

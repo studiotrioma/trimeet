@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src ws: wss: https: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'wasm-unsafe-eval'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
   <title>TriMeet</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="settings.css" />
@@ -32,7 +34,8 @@
       <symbol id="i-host" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 16.2a6 6 0 0 0 0-8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 19.1a10 10 0 0 0 0-14.2"/></symbol>
       <symbol id="i-join" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></symbol>
       <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
-      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 20 3"/><path d="m16 7 3 3"/><path d="m18 5 2 2"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
       <symbol id="i-res" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 9v6M7 12h3M10 9v6M14 9v6h2a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-2z"/></symbol>
       <symbol id="i-fps" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M10 2h4"/></symbol>
       <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14l4-5"/><path d="M3.5 18a9.5 9.5 0 1 1 17 0"/></symbol>
@@ -94,6 +97,12 @@
           <input id="nameInput" type="text" maxlength="20" placeholder="Digite seu nome" spellcheck="false" autocomplete="off" />
         </label>
       </div>
+
+      <!-- só no site: código de convite (pedido uma vez por navegador) -->
+      <label class="field invite-field hidden" id="inviteRow">
+        <svg class="ic"><use href="#i-key"/></svg>
+        <input id="inviteInput" type="text" maxlength="40" placeholder="Código de convite" spellcheck="false" autocomplete="off" />
+      </label>
 
       <button id="enterBtn" class="btn primary wide" disabled><span id="enterTxt">Entrar</span><svg class="ic"><use href="#i-arrow"/></svg></button>
       <p id="loginErr" class="err"></p>
@@ -249,5 +258,6 @@
   <script src="glass.js"></script>
   <script src="halftone.js"></script>
   <script src="app.js"></script>
+  <script src="mobile.js"></script>
 </body>
 </html>

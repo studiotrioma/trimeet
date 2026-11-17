@@ -24,6 +24,14 @@ echo   Publicando...
 call npx -y wrangler@4 deploy
 if errorlevel 1 goto erro
 echo.
+echo.
+choice /c SN /n /t 20 /d N /m "  Criar ou trocar o codigo de convite do site? S ou N: "
+if errorlevel 2 goto turn
+echo   Digite o codigo de convite que seus amigos vao usar no site e aperte Enter:
+call npx -y wrangler@4 secret put INVITE_CODE
+
+:turn
+echo.
 choice /c SN /n /t 10 /d N /m "  Configurar o retransmissor TURN agora? S ou N: "
 if errorlevel 2 goto fim
 echo   Cole a Turn Token ID e aperte Enter:

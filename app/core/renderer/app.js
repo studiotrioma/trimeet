@@ -166,6 +166,9 @@ async function initLogin() {
   };
   nameInput.onkeydown = (e) => { if (e.key === 'Enter' && !$('#enterBtn').disabled) enter(); };
   nameInput.onfocus = nameInput.onblur = () => renderLogin();
+  const inv = $('#inviteInput');
+  inv.oninput = () => { $('#loginErr').textContent = ''; renderLogin(); };
+  inv.onkeydown = (e) => { if (e.key === 'Enter' && !$('#enterBtn').disabled) enter(); };
   $('#enterBtn').onclick = enter;
 
   renderLogin();
@@ -181,8 +184,11 @@ function renderLogin(pop) {
   orb.classList.toggle('img', !!c.avatar);
   if (c.avatar) orb.style.setProperty('--img', `url(${c.avatar})`); else orb.style.removeProperty('--img');
   if (pop) { orb.classList.remove('pop'); orb.offsetWidth; orb.classList.add('pop'); }
-  $('#enterBtn').disabled = !c.name;
-  $('#enterTxt').textContent = !c.name ? 'Digite seu nome' : 'Entrar';
+  const needInvite = !!(window.trimeet.web && !window.trimeet.hasInvite());
+  $('#inviteRow').classList.toggle('hidden', !needInvite);
+  const inv = needInvite ? $('#inviteInput').value.trim() : 'ok';
+  $('#enterBtn').disabled = !c.name || !inv;
+  $('#enterTxt').textContent = !c.name ? 'Digite seu nome' : !inv ? 'Digite o convite' : 'Entrar';
   $('.name-field').classList.toggle('need', !c.name && document.activeElement !== $('#nameInput'));
 }
 
@@ -200,6 +206,12 @@ async function enter() {
 }
 async function enterInner() {
   const c = state.cfg;
+  if (window.trimeet.web && !window.trimeet.hasInvite()) {
+    $('#enterBtn').disabled = true;
+    const ok = await window.trimeet.redeemInvite($('#inviteInput').value);
+    if (!ok) { $('#loginErr').textContent = 'Código de convite errado'; $('#enterBtn').disabled = false; return; }
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+  }
   if (c.server && typeof c.server !== 'string') delete c.server; // conserta config da 5.0/6.0
   $('#loginErr').textContent = '';
   $('#enterBtn').disabled = true;
@@ -220,7 +232,9 @@ async function enterInner() {
     renderChannels();
     renderPeople();
     renderChanTitle();
-    $('#room').classList.toggle('side-collapsed', !!state.cfg.sideCollapsed);
+    // no celular a gaveta de salas começa aberta (para escolher a sala) e fecha ao entrar
+    const mobile = document.documentElement.classList.contains('is-mobile');
+    $('#room').classList.toggle('side-collapsed', mobile ? false : !!state.cfg.sideCollapsed);
     layout(true);
   });
   if (window.TMPerms) {
@@ -575,6 +589,7 @@ function renderChanTitle() {
 }
 
 async function joinChannel(id, opts = {}) {
+  window.tmMobileCloseDrawer?.();
   if (state.channelId === id) return;
   if (!opts.force && window.TMPerms && !TMPerms.canJoin(id)) { toast('Sala restrita'); return; }
   if (state.shares.size && !confirm('Trocar de sala vai parar sua transmissão. Continuar?')) return;
@@ -815,7 +830,14 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
       // restrictOwnAudio: tira do som do PC tudo que o próprio TriMeet toca (vozes, efeitos, transmissões),
       // senão quem fala ouve a própria voz de volta. Funciona no motor novo (instalador 8.0+); no antigo é ignorado.
       audio: opts.audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000, restrictOwnAudio: true } : false,
+      // no site: o navegador mostra a escolha (tela inteira, janela ou aba), com o som do PC já marcado
+      ...(window.trimeet.web ? { systemAudio: opts.audio ? 'include' : 'exclude', selfBrowserSurface: 'exclude', surfaceSwitching: 'include', monitorTypeSurfaces: 'include' } : {}),
     });
+    if (window.trimeet.web) {
+      const surf = stream.getVideoTracks()[0]?.getSettings?.().displaySurface;
+      kind = surf === 'monitor' ? 'screen' : 'window';
+      label = surf === 'monitor' ? 'Tela inteira' : surf === 'browser' ? 'Aba do navegador' : 'Janela';
+    }
     const sa = stream.getAudioTracks()[0];
     if (sa) {
       const dev = (sa.getSettings && sa.getSettings().deviceId) || '';
@@ -1009,9 +1031,10 @@ function openMenu(e, build) {
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(() => {
       if (!m.isConnected) { ro.disconnect(); return; }
-      const h = m.getBoundingClientRect().height;
-      const top = parseFloat(m.style.top);
-      if (top + h > innerHeight - 10) m.style.top = Math.max(10, innerHeight - h - 10) + 'px';
+      const r = m.getBoundingClientRect();
+      const top = parseFloat(m.style.top), left = parseFloat(m.style.left);
+      if (top + r.height > innerHeight - 10) m.style.top = Math.max(10, innerHeight - r.height - 10) + 'px';
+      if (left + r.width > innerWidth - 10) m.style.left = Math.max(10, innerWidth - r.width - 10) + 'px';
     });
     ro.observe(m);
   }
@@ -1259,6 +1282,7 @@ function renderCards() {
       c = document.createElement('div');
       c.className = 'tile card';
       c.dataset.id = id;
+      c.dataset.name = m.from;
       c.style.viewTransitionName = 'tile-' + (++vtCount);
       c.dataset.order = vtCount;
       c.innerHTML = `<img class="thumb" alt="">
@@ -1567,6 +1591,7 @@ function renderPeople() {
 // Barra de salas: só recolhe quando a pessoa quiser
 function setSideCollapsed(on) {
   $('#room').classList.toggle('side-collapsed', on);
+  if (document.documentElement.classList.contains('is-mobile')) { setTimeout(fitTiles, 520); return; }
   $('#sideToggle').title = on ? 'Mostrar salas' : 'Recolher salas';
   state.cfg.sideCollapsed = on;
   window.trimeet.saveConfig(state.cfg);
@@ -1763,6 +1788,12 @@ async function openShareModal() {
   showEl($('#shareModal'));
   requestAnimationFrame(() => { refreshBoundSegs(); refreshStepper(); syncAllSegs(true); });
   updateUploadHint();
+  if (window.trimeet.web) {
+    $('#shareModal').classList.add('web');
+    state.selectedSource = { id: 'web', label: 'Tela', type: 'screen' };
+    $('#goShare').disabled = false;
+    return;
+  }
   state.sourcesCache = await window.trimeet.getSources();
   renderSources();
 }
@@ -2236,7 +2267,7 @@ let lastUpd = null;
 function renderUpdate(u) {
   lastUpd = u;
   const short = (v) => String(v || '').replace(/\.0(\.0)?$/, '.0').replace(/^(\d+)\.0\.0$/, '$1.0');
-  $('#verTxt').textContent = `v${short(u.current)} · motor ${String(window.trimeet.engine || '?').split('.')[0]}`;
+  $('#verTxt').textContent = window.trimeet.web ? `v${short(u.current)} · site` : `v${short(u.current)} · motor ${String(window.trimeet.engine || '?').split('.')[0]}`;
   const chk = $('#checkUpd');
   const lbl = chk.querySelector('span');
   chk.disabled = false;
