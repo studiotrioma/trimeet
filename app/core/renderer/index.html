@@ -110,10 +110,11 @@
 
       <div class="me-panel">
         <span class="me-orb" id="meOrbSmall"></span>
-        <div class="me-info"><b id="meName"></b><span id="meStatus">Online</span></div>
+        <div class="me-info"><b id="meName"></b></div>
         <button id="micBtn" class="btn icon sm" title="Mutar (M)"><svg class="ic"><use href="#i-mic"/></svg></button>
         <button id="deafBtn" class="btn icon sm" title="Desativar som"><svg class="ic"><use href="#i-headset"/></svg></button>
         <button id="camBtn" class="btn icon sm" title="Ligar câmera"><svg class="ic"><use href="#i-camera-off"/></svg></button>
+        <button id="sfxBtn" class="btn icon sm" title="Efeitos sonoros"><svg class="ic"><use href="#i-sparkles"/></svg></button>
         <button id="settingsBtn" class="btn icon sm" title="Configurações"><svg class="ic"><use href="#i-gear"/></svg></button>
       </div>
     </aside>
@@ -134,7 +135,6 @@
           <div class="big-orb">
             <div class="orb-glow"></div>
             <div class="orb-content">
-              <span class="spinner"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
               <span id="emptyTxt">Escolha uma sala</span>
             </div>
           </div>
@@ -144,10 +144,9 @@
       </main>
 
       <nav class="dock glass" data-glass="999" id="dock">
-        <button id="sfxBtn" class="btn icon" title="Efeitos sonoros"><svg class="ic"><use href="#i-sparkles"/></svg></button>
         <button id="shareBtn" class="btn primary"><svg class="ic"><use href="#i-share"/></svg>Compartilhar</button>
         <button id="stopShareBtn" class="btn stop-pill hidden" title="Parar minha transmissão"><svg class="ic fill"><use href="#i-stop"/></svg>Parar transmissão</button>
-        <button id="stopWatchBtn" class="btn ghost-pill hidden" title="Parar de assistir"><svg class="ic"><use href="#i-eye-off"/></svg>Parar de assistir</button>
+        <button id="stopWatchBtn" class="btn ghost-pill hidden" title="Parar de assistir"><svg class="ic fill"><use href="#i-stop"/></svg>Parar de assistir</button>
         <button id="statsToggle" class="hidden" aria-hidden="true"></button>
         <button id="leaveBtn" class="btn icon danger" title="Sair da sala"><svg class="ic"><use href="#i-phone-off"/></svg></button>
       </nav>

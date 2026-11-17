@@ -299,4 +299,54 @@ function setupUpdater() {
   setInterval(checkForUpdates, 30 * 60 * 1000);
 }
 
+// ===================================================================
+// Avisos discretos no canto inferior direito (ex.: "Brendo ficou online")
+// Aparecem por cima de tudo, mesmo com o TriMeet minimizado.
+// ===================================================================
+let notifyWin = null;
+const notifyQueue = [];
+let notifyBusy = false;
+function showNextNotify() {
+  if (notifyBusy || !notifyQueue.length) return;
+  notifyBusy = true;
+  const data = notifyQueue.shift();
+  const { screen: scr } = require('electron');
+  const wa = scr.getPrimaryDisplay().workArea;
+  const W = 340, H = 92, M = 16;
+  if (!notifyWin || notifyWin.isDestroyed()) {
+    notifyWin = new BrowserWindow({
+      width: W, height: H, x: wa.x + wa.width - W - M, y: wa.y + wa.height - H - M,
+      frame: false, transparent: true, resizable: false, movable: false, focusable: false,
+      skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false,
+      backgroundColor: '#00000000',
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+    notifyWin.setAlwaysOnTop(true, 'screen-saver');
+    notifyWin.setIgnoreMouseEvents(true);
+    notifyWin.loadFile(path.join(__dirname, 'renderer', 'notify.html'));
+    notifyWin.on('closed', () => { notifyWin = null; });
+  }
+  notifyWin.setPosition(wa.x + wa.width - W - M, wa.y + wa.height - H - M);
+  const go = () => {
+    notifyWin.webContents.executeJavaScript(`window.showNotify(${JSON.stringify(data)})`).catch(() => {});
+    notifyWin.showInactive();
+    setTimeout(() => {
+      if (notifyWin && !notifyWin.isDestroyed()) notifyWin.hide();
+      notifyBusy = false;
+      setTimeout(showNextNotify, 250);
+    }, 4200);
+  };
+  if (notifyWin.webContents.isLoading()) notifyWin.webContents.once('did-finish-load', go); else go();
+}
+ipcMain.handle('notify', (_e, data) => {
+  if (!data || typeof data !== 'object') return;
+  notifyQueue.push({
+    name: String(data.name || '').slice(0, 32),
+    text: String(data.text || '').slice(0, 60),
+    color: /^#[0-9a-f]{6}$/i.test(data.color || '') ? data.color : '#8a8f98',
+  });
+  if (notifyQueue.length > 4) notifyQueue.splice(0, notifyQueue.length - 4);
+  showNextNotify();
+});
+
 app.on('window-all-closed', () => app.quit());

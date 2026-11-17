@@ -643,3 +643,17 @@ body.idle #stage { cursor: auto; }
 .me-panel .btn.sm { width: 30px; height: 30px; }
 .me-panel .btn.sm .ic { width: 16px; height: 16px; }
 .me-info { padding-left: 8px; }
+
+/* ---------- ajustes 5.0 ---------- */
+.me-info { justify-content: center; }
+.me-info b { font-size: 14px; }
+#empty.in-room { display: none !important; }
+.big-orb .orb-glow { animation: none; }
+.member .mi .lmute { display: inline-flex; color: var(--text-3); }
+.person .vic.local { color: var(--text-3); }
+.btn.ghost-pill .ic.fill { fill: currentColor; stroke: none; width: 12px; height: 12px; }
+.btn.ghost-pill { background: rgba(255, 255, 255, .1); color: var(--text-2); }
+.btn.ghost-pill:hover:not(:disabled) { background: rgba(255, 255, 255, .16); color: var(--text); }
+.me-panel #sfxBtn.on { background: rgba(255, 210, 166, .14); color: #ffd2a6; }
+.tile .ctrls .btn .ic.fill, .cm-item .ic use[href="#i-stop"] { fill: currentColor; stroke: none; }
+.tile .ctrls .btn .ic.fill { width: 12px; height: 12px; }

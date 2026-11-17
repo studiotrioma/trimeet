@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('trimeet', {
   soundsSave: (list) => ipcRenderer.invoke('sounds-save', list),
   localIps: () => ipcRenderer.invoke('local-ips'),
   platform: process.platform,
+  notify: (data) => ipcRenderer.invoke('notify', data),
   updateGet: () => ipcRenderer.invoke('update-get'),
   updateCheck: () => ipcRenderer.invoke('update-check'),
   updateInstall: () => ipcRenderer.invoke('update-install'),

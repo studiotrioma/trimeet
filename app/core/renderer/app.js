@@ -269,6 +269,9 @@ function connectHub() {
     else if (m.type === 'peers') {
       const list = m.peers.filter((n) => n !== state.myName);
       const added = list.filter((n) => !state.hubOnline.includes(n));
+      // aviso "ficou online" só para quem chegou depois de mim
+      if (state.hubSeen) for (const n of added) window.trimeet.notify?.({ name: n, text: 'ficou online', color: colorOf(n) });
+      state.hubSeen = true;
       state.hubOnline = list;
       for (const n of [...state.presence.keys()]) if (!list.includes(n)) state.presence.delete(n);
       for (const n of added) { publishPresence(n); publishChannels(n); window.TMSound?.onHubPeerAdded(n); }
@@ -353,11 +356,12 @@ function renderChannels() {
         r.oncontextmenu = (e) => { e.preventDefault(); openPersonMenu(e, m.name, c.id); };
       }
       if (mbox.children[i] !== r) mbox.insertBefore(r, mbox.children[i] || null);
-      const k = (m.live ? 'L' : '') + (m.cam ? 'C' : '') + (m.deaf ? 'D' : m.muted ? 'M' : '');
+      const lm = !m.me && isLocalMuted(m.name);
+      const k = (m.live ? 'L' : '') + (m.cam ? 'C' : '') + (lm ? 'S' : '') + (m.deaf ? 'D' : m.muted ? 'M' : '');
       const mi = r.querySelector('.mi');
       if (mi.dataset.k !== k) {
         mi.dataset.k = k;
-        mi.innerHTML = (m.cam ? `<span class="camic">${icon('camera')}</span>` : '') + (m.deaf ? icon('deaf') : m.muted ? icon('mic-off') : '') + (m.live ? '<span class="lv" title="Assistir">AO VIVO</span>' : '');
+        mi.innerHTML = (m.cam ? `<span class="camic">${icon('camera')}</span>` : '') + (lm ? `<span class="lmute" title="Silenciado para você">${icon('mic-off')}</span>` : '') + (m.deaf ? icon('deaf') : m.muted ? icon('mic-off') : '') + (m.live ? '<span class="lv" title="Assistir">AO VIVO</span>' : '');
         const lv = mi.querySelector('.lv');
         if (lv) lv.onclick = (e) => { e.stopPropagation(); watchPerson(m.name, c.id); };
       }
@@ -425,10 +429,6 @@ function renderMe() {
   if (!box || !state.myName) return;
   if (box.dataset.n !== state.myName) { box.dataset.n = state.myName; box.innerHTML = orbHTML(state.myName); }
   $('#meName').textContent = state.myName;
-  const ch = state.channelId && state.channels.get(state.channelId);
-  const st = $('#meStatus');
-  st.textContent = ch ? `Na sala ${ch.name}` : 'Online';
-  st.classList.toggle('in', !!ch);
   renderVoice();
 }
 
@@ -436,7 +436,8 @@ function renderChanTitle() {
   const ch = state.channelId && state.channels.get(state.channelId);
   $('#chanName').textContent = ch ? ch.name : 'TriMeet';
   $('#room').classList.toggle('in-channel', !!ch);
-  $('#emptyTxt').textContent = ch ? 'Ninguém ao vivo' : 'Escolha uma sala';
+  $('#emptyTxt').textContent = 'Escolha uma sala';
+  $('#empty').classList.toggle('in-room', !!ch);
 }
 
 async function joinChannel(id, opts = {}) {
@@ -790,6 +791,8 @@ function setLocalMute(name, on) {
   const deaf = state.voice?.deaf;
   for (const v of state.voices.values()) if (v.from === name) v.audio.muted = !state.voice || deaf || on;
   saveVolumes();
+  renderChannels();
+  renderPeople();
 }
 
 // ---- menu do botão direito ----
@@ -865,7 +868,7 @@ function openPersonMenu(e, name, chId) {
       menuSep(m);
       if (watchingId) {
         menuSlider(m, 'screen', 'Volume da transmissão', getVol('stream', name), (v) => setVol('stream', name, v));
-        menuItem(m, 'eye-off', 'Parar de assistir', () => unwatch(watchingId), { danger: true });
+        menuItem(m, 'stop', 'Parar de assistir', () => unwatch(watchingId), { danger: true });
       } else {
         menuItem(m, 'play', 'Assistir transmissão', () => watchPerson(name, chId));
       }
@@ -889,7 +892,7 @@ function openTileMenu(e, { id, name, mine, tile }) {
     menuSep(m);
     if (state.cam && id === state.cam.id) menuItem(m, 'camera-off', 'Desligar câmera', toggleCamera, { danger: true });
     else if (mine) menuItem(m, 'stop', 'Parar transmissão', () => stopShare(id), { danger: true });
-    else if (!tile.classList.contains('cam')) menuItem(m, 'eye-off', 'Parar de assistir', () => unwatch(id), { danger: true });
+    else if (!tile.classList.contains('cam')) menuItem(m, 'stop', 'Parar de assistir', () => unwatch(id), { danger: true });
   });
 }
 
@@ -912,7 +915,7 @@ function addCamToPeer(peer) {
 }
 async function toggleCamera() {
   if (state.cam) return stopCamera();
-  if (!state.channelId) return;
+  if (!state.channelId) { toast('Entre numa sala para ligar a câmera'); return; }
   let stream;
   const camId = state.cfg.audio?.camId;
   try {
@@ -1182,7 +1185,7 @@ function makeTile({ id, name, label, kind, stream, mine }) {
       <button class="btn icon sbtn" title="Estatísticas">${icon('chart')}</button>
       <button class="btn icon fbtn" title="Destacar">${icon('expand')}</button>
       <button class="btn icon fsbtn" title="Tela cheia">${icon('full')}</button>
-      ${mine || kind === 'camera' ? '' : `<button class="btn icon xbtn" title="Parar de assistir">${icon('eye-off')}</button>`}
+      ${mine || kind === 'camera' ? '' : `<button class="btn icon xbtn" title="Parar de assistir">${icon('stop', 'fill')}</button>`}
     </div>`;
   if (mine) t.querySelector('.label').insertAdjacentHTML('beforeend', '<span class="viewers"></span>');
   t.querySelector('.who').textContent = mine ? 'Você' : name;
@@ -1290,13 +1293,13 @@ function renderPeople() {
     el.classList.toggle('is-live', live);
     const vs = me ? (state.voice ? { inVoice: true, muted: state.voice.muted, deaf: state.voice.deaf } : null) : state.vstate.get(n);
     const vic = el.querySelector('.vic');
-    const vicKind = !vs || !vs.inVoice ? '' : vs.deaf ? 'deaf' : vs.muted ? 'mute' : 'on';
+    const vicKind = (!me && isLocalMuted(n)) ? 'local' : !vs || !vs.inVoice ? '' : vs.deaf ? 'deaf' : vs.muted ? 'mute' : 'on';
     if (vic.dataset.k !== vicKind) {
       vic.dataset.k = vicKind;
-      vic.innerHTML = vicKind === 'deaf' ? icon('deaf') : vicKind === 'mute' ? icon('mic-off') : vicKind === 'on' ? icon('headset') : '';
+      vic.innerHTML = vicKind === 'local' ? icon('mic-off') : vicKind === 'deaf' ? icon('deaf') : vicKind === 'mute' ? icon('mic-off') : vicKind === 'on' ? icon('headset') : '';
       vic.className = 'vic ' + vicKind;
     }
-    el.title = vicKind === 'on' ? title + ' · na voz' : vicKind === 'mute' ? title + ' · na voz (mudo)' : vicKind === 'deaf' ? title + ' · na voz (sem som)' : title;
+    el.title = vicKind === 'local' ? title + ' · silenciado para você' : vicKind === 'on' ? title + ' · na voz' : vicKind === 'mute' ? title + ' · na voz (mudo)' : vicKind === 'deaf' ? title + ' · na voz (sem som)' : title;
   });
 }
 
@@ -1360,6 +1363,26 @@ function placeIn(container, tiles, opts = {}) {
     y += best.h + gap;
   }
 }
+function placeRect(tiles, rect, opts = {}) {
+  // posiciona dentro de um retângulo do #grid
+  const gap = opts.gap ?? 12;
+  const items = tiles.map((t) => ({ t, a: aspectOf(t) }));
+  const best = packRows(items, rect.w, rect.h, gap, opts.maxRows);
+  if (!best) return;
+  const totalH = best.rows.length * best.h + gap * (best.rows.length - 1);
+  let y = rect.y + (opts.alignTop ? 0 : (rect.h - totalH) / 2);
+  for (const row of best.rows) {
+    const rowW = row.reduce((s, it) => s + best.h * it.a, 0) + gap * (row.length - 1);
+    let x = rect.x + (rect.w - rowW) / 2;
+    for (const it of row) {
+      const w = best.h * it.a, st = it.t.style;
+      st.left = Math.round(x) + 'px'; st.top = Math.round(y) + 'px';
+      st.width = Math.round(w) + 'px'; st.height = Math.round(best.h) + 'px';
+      x += w + gap;
+    }
+    y += best.h + gap;
+  }
+}
 function fitTiles() {
   const grid = $('#grid'), focus = $('#focus');
   if (!grid) return;
@@ -1367,8 +1390,23 @@ function fitTiles() {
   const rank = (t) => (t.classList.contains('cam') ? 1 : 0) * 1e9 + (+t.dataset.order || 0);
   const focused = [...focus.children].filter((t) => t.classList.contains('tile'));
   const rest = [...grid.children].filter((t) => t.classList.contains('tile')).sort((x, y) => rank(x) - rank(y));
-  if (focused.length) placeIn(focus, focused, { gap: 0 });
-  if (rest.length) placeIn(grid, rest, focused.length ? { maxRows: 1, gap: 10 } : {});
+  if (focused.length) { placeIn(focus, focused, { gap: 0 }); if (rest.length) placeIn(grid, rest, { maxRows: 1, gap: 10 }); return; }
+  // sem destaque: transmissões são a prioridade; câmeras ficam como segundo plano
+  const screens = rest.filter((t) => !t.classList.contains('cam'));
+  const cams = rest.filter((t) => t.classList.contains('cam'));
+  const W = grid.clientWidth, H = grid.clientHeight, gap = 12;
+  if (!screens.length || !cams.length) { placeIn(grid, rest); return; }
+  if (W / H > 2.1) {
+    // tela bem larga: câmeras numa coluna à direita
+    const cw = Math.max(180, Math.min(320, W * 0.2));
+    placeRect(screens, { x: 0, y: 0, w: W - cw - gap, h: H });
+    placeRect(cams, { x: W - cw, y: 0, w: cw, h: H }, { gap: 10 });
+  } else {
+    // monitor normal ou celular: câmeras numa faixa embaixo
+    const ch = Math.max(96, Math.min(180, H * 0.22));
+    placeRect(screens, { x: 0, y: 0, w: W, h: H - ch - gap });
+    placeRect(cams, { x: 0, y: H - ch, w: W, h: ch }, { maxRows: 1, gap: 10 });
+  }
 }
 new ResizeObserver(() => fitTiles()).observe(document.getElementById('stage'));
 // quando o vídeo descobre o próprio formato, reorganiza
@@ -1540,6 +1578,7 @@ function logout() {
   state.loggedOut = true;
   if (state.hub) { try { state.hub.close(); } catch {} state.hub = null; }
   state.hubOnline = [];
+  state.hubSeen = false;
   state.presence.clear();
   smooth(() => {
     $('#room').classList.add('hidden');
