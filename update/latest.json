@@ -1,1 +1,1 @@
-{"version": "7.0", "notes": "Corrigido: botão Entrar travava depois do primeiro uso (configuração dos cargos se misturava com o endereço do servidor).", "bundle": "/update/core-7.0.bin", "sha256": "3503f5f9625124942470c048ea17f80ce61347e940bfa56dee78a56d7f420498"}
+{"version": "8.0", "notes": "Uma transmissão por pessoa (trocar de tela troca a imagem). Instalador 8.0: motor novo que tira a voz dos amigos do som do PC compartilhado.", "bundle": "/update/core-8.0.bin", "sha256": "b10eb26e76d00d8e2a928b2034028116cee5e9b7e3d1406c9b3b07ef85b4a22d"}

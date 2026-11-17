@@ -722,8 +722,12 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({
       video: videoC,
-      audio: opts.audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 } : false,
+      // restrictOwnAudio: tira do som do PC tudo que o próprio TriMeet toca (vozes, efeitos, transmissões),
+      // senão quem fala ouve a própria voz de volta. Funciona no motor novo (instalador 8.0+); no antigo é ignorado.
+      audio: opts.audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000, restrictOwnAudio: true } : false,
     });
+    const sa = stream.getAudioTracks()[0];
+    if (sa) console.log('som do PC: restrictOwnAudio=' + (sa.getSettings && sa.getSettings().restrictOwnAudio));
   } catch (e) {
     toast('Não foi possível capturar a tela: ' + e.message);
     return;
@@ -738,6 +742,11 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
     a.contentHint = 'music';
     try { await a.applyConstraints({ echoCancellation: false, noiseSuppression: false, autoGainControl: false }); } catch {}
   }
+
+  // Cada pessoa transmite uma tela só: escolher outra troca a imagem da transmissão atual
+  // (mesmo bloco, quem está assistindo continua assistindo), igual ao Discord.
+  const cur = [...state.shares.entries()][0];
+  if (cur) { await swapShare(cur[0], cur[1], stream, label, kind, opts); return; }
 
   const id = stream.id;
   const share = { stream, label, kind, opts, watchers: new Set(), thumbT: null };
@@ -757,6 +766,43 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
   };
   setTimeout(sendThumb, 1500);
   share.thumbT = setInterval(sendThumb, 6000);
+  announceShares();
+  renderDock();
+  renderPeople();
+  publishPresence();
+}
+
+async function swapShare(id, share, fresh, label, kind, opts) {
+  const nv = fresh.getVideoTracks()[0] || null;
+  const na = fresh.getAudioTracks()[0] || null;
+  const old = share.stream.getTracks();
+  for (const peer of state.peers.values()) {
+    const senders = peer.senders.get(id);
+    if (!senders) continue;
+    let hasAudio = false;
+    for (const snd of senders) {
+      const k = snd._tmKind || snd.track?.kind;
+      if (k === 'audio') hasAudio = true;
+      try { await snd.replaceTrack(k === 'video' ? nv : na); } catch (e) { console.warn('replaceTrack', e); }
+      if (k === 'video') applyParams(snd, opts);
+    }
+    if (na && !hasAudio) {
+      const snd = peer.pc.addTrack(na, share.stream);
+      snd._tmKind = 'audio';
+      senders.push(snd);
+    }
+  }
+  // o MediaStream continua o mesmo (mesmo id para todo mundo); só os tracks mudam
+  for (const t of old) { t.onended = null; share.stream.removeTrack(t); t.stop(); }
+  for (const t of fresh.getTracks()) share.stream.addTrack(t);
+  if (nv) nv.onended = () => stopShare(id);
+  Object.assign(share, { label, kind, opts });
+  if (share.tile) {
+    share.tile.querySelector('.ltxt').textContent = label;
+    share.tile.querySelector('.scr use')?.setAttribute('href', kind === 'window' ? '#i-window' : '#i-screen');
+    const vid = share.tile.querySelector('video');
+    if (vid) { vid.srcObject = share.stream; vid.play().catch(() => {}); }
+  }
   announceShares();
   renderDock();
   renderPeople();
@@ -1139,6 +1185,7 @@ function addShareToPeer(peer, id, share) {
   const senders = [];
   for (const track of share.stream.getTracks()) {
     const sender = peer.pc.addTrack(track, share.stream);
+    sender._tmKind = track.kind;
     senders.push(sender);
     if (track.kind === 'video') preferCodec(peer.pc, sender, share.opts.codec);
     applyParams(sender, share.opts);
