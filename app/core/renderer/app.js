@@ -229,8 +229,6 @@ async function enter() {
 // ===================================================================
 const DEFAULT_CHANNELS = [
   { id: 'geral', name: 'Geral', ts: 1, order: 1 },
-  { id: 'jogos', name: 'Jogos', ts: 1, order: 2 },
-  { id: 'filmes', name: 'Filmes', ts: 1, order: 3 },
 ];
 function loadChannels() {
   state.channels = new Map();
@@ -953,6 +951,7 @@ function openChannelMenu(e, chId) {
   });
 }
 function paintBadges(el, name) {
+  return; // sem símbolos de cargo/dono na barra lateral (pedido do Levy)
   if (!el || !window.TMPerms) return;
   const owner = TMPerms.isOwnerName?.(name);
   const roles = TMPerms.rolesOf?.(name) || [];

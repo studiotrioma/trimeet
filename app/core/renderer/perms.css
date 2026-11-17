@@ -110,3 +110,5 @@
 .pm-tag.person .orb { width: 26px; height: 26px; font-size: 11px; }
 .pm-tag.person .orb::after { display: none; }
 .pm-tag:disabled { cursor: default; }
+
+.pm-goserver { align-self: center; margin: 6px auto 2px; }

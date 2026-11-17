@@ -375,9 +375,10 @@
           <span class="pm-box">${I('check')}</span><span class="pm-dot2"></span><b>${esc(r.name)}</b>
           <span class="pm-mini">${PERMS.filter((p) => r.perms[p.k]).map((p) => I(p.ic)).join('')}</span></label>`;
       }
-      if (rolesSorted().length <= 1) h += `<div class="pm-empty">Crie cargos em Servidor</div>`;
+      if (rolesSorted().length <= 1) h += can('manageRoles') ? `<button class="btn primary pm-goserver">${I('plus')}Criar cargo</button>` : `<div class="pm-empty">Ainda não há cargos</div>`;
       h += '</div>';
       body.innerHTML = h;
+      body.querySelector('.pm-goserver')?.addEventListener('click', () => { closeModal(); setTimeout(openServer, 240); });
       for (const cb of body.querySelectorAll('.pm-check input')) {
         cb.onchange = () => {
           const ok = edit((d) => {
