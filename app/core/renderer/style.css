@@ -610,3 +610,36 @@ body.idle .main { left: 0; }
 .tile.cam.mine video { transform: scaleX(-1); }
 .dock #camBtn.on { background: rgba(50, 215, 75, .16); color: var(--ok); }
 .member .mi .camic { display: inline-flex; color: var(--text-2); }
+
+
+/* ==========================================================================
+   Organização (5.0): blocos no formato da imagem, barra lateral fixa
+   ========================================================================== */
+body.idle .sidebar, body.idle .topbar, body.idle .dock { opacity: 1 !important; transform: none !important; pointer-events: auto !important; }
+body.idle .dock { transform: translateX(-50%) !important; }
+body.idle .main { left: 278px; }
+body.idle #stage { cursor: auto; }
+#room.side-collapsed .sidebar { opacity: 0; transform: translateX(-24px) scale(.98); pointer-events: none; }
+#room.side-collapsed .main { left: 0; }
+#sideToggle { margin-left: -6px; color: var(--text-2); }
+#room.side-collapsed #sideToggle { color: var(--accent); }
+
+.grid, .focus { position: relative; display: block; }
+.grid:empty { display: none; }
+.grid { flex: 1; min-height: 0; }
+.stage.has-focus .grid { flex: 0 0 140px; overflow: visible; }
+.focus { flex: 1; min-height: 0; }
+.grid > .tile, .focus > .tile { position: absolute; left: 0; top: 0; width: 0; height: 0;
+  transition: left 520ms var(--spring), top 520ms var(--spring), width 520ms var(--spring), height 520ms var(--spring); }
+.tile video { object-fit: cover; }
+.tile:not(.cam) video { object-fit: contain; }
+.stage.has-focus .grid .tile { border-radius: 16px; }
+
+/* painel do usuário com 4 botões, sem cortar o status */
+.sidebar { width: 284px; }
+.main, body.idle .main { left: 298px; }
+#room.side-collapsed .main { left: 0; }
+.me-panel { gap: 2px; padding-left: 6px; }
+.me-panel .btn.sm { width: 30px; height: 30px; }
+.me-panel .btn.sm .ic { width: 16px; height: 16px; }
+.me-info { padding-left: 8px; }

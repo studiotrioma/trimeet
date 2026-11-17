@@ -204,6 +204,7 @@ async function enter() {
     renderChannels();
     renderPeople();
     renderChanTitle();
+    $('#room').classList.toggle('side-collapsed', !!state.cfg.sideCollapsed);
     layout(true);
   });
   connectHub();
@@ -998,6 +999,7 @@ function renderCards() {
       c.className = 'tile card';
       c.dataset.id = id;
       c.style.viewTransitionName = 'tile-' + (++vtCount);
+      c.dataset.order = vtCount;
       c.innerHTML = `<img class="thumb" alt="">
         <div class="card-body">
           <span class="card-orb">${orbHTML(m.from)}</span>
@@ -1170,6 +1172,7 @@ function makeTile({ id, name, label, kind, stream, mine }) {
   t.className = 'tile' + (mine ? ' mine' : '') + (kind === 'camera' ? ' cam' : '');
   t.dataset.id = id;
   t.style.viewTransitionName = 'tile-' + (++vtCount);
+  t.dataset.order = document.querySelector(`.tile.card[data-id="${CSS.escape(id)}"]`)?.dataset.order || vtCount;
   t.innerHTML = `
     <video autoplay playsinline ${mine ? 'muted' : ''}></video>
     <div class="chip label">${orbHTML(name)}<span class="who"></span><span class="scr">${icon(kind === 'window' ? 'window' : kind === 'camera' ? 'camera' : 'screen')}<span class="ltxt"></span></span></div>
@@ -1244,10 +1247,11 @@ function layout(noTransition) {
       const fb = t.querySelector('.fbtn');
       if (fb) { fb.innerHTML = icon(isF ? 'shrink' : 'expand'); fb.title = isF ? 'Voltar' : 'Destacar'; }
     }
-    grid.className = 'grid n' + Math.min(grid.children.length, 9);
+    grid.className = 'grid';
     stage.classList.toggle('has-focus', !!state.focusId);
     focus.classList.toggle('hidden', !state.focusId);
     $('#empty').classList.toggle('hidden', tiles.length > 0);
+    requestAnimationFrame(fitTiles);
     const roomVisible = !$('#room').classList.contains('hidden');
     window.Halftone && Halftone.setActive(!roomVisible || tiles.length === 0);
   };
@@ -1296,17 +1300,80 @@ function renderPeople() {
   });
 }
 
-// Esconde barra e dock quando o mouse fica parado (só com alguém ao vivo)
-let idleT;
-function poke() {
-  document.body.classList.remove('idle');
-  clearTimeout(idleT);
-  idleT = setTimeout(() => {
-    const busy = !$('#shareModal').classList.contains('hidden') || $('#room').classList.contains('hidden') || !$$('.tile').length;
-    if (!busy && !document.querySelector('.topbar:hover, .dock:hover')) document.body.classList.add('idle');
-  }, 2800);
+// Barra de salas: só recolhe quando a pessoa quiser
+function setSideCollapsed(on) {
+  $('#room').classList.toggle('side-collapsed', on);
+  $('#sideToggle').title = on ? 'Mostrar salas' : 'Recolher salas';
+  state.cfg.sideCollapsed = on;
+  window.trimeet.saveConfig(state.cfg);
+  setTimeout(fitTiles, 520);
 }
-['mousemove', 'mousedown', 'keydown', 'wheel'].forEach((ev) => window.addEventListener(ev, poke, { passive: true }));
+$('#sideToggle').onclick = () => setSideCollapsed(!$('#room').classList.contains('side-collapsed'));
+
+// ===================================================================
+// Organização das telas: cada bloco no formato da própria imagem,
+// em fileiras alinhadas e centralizadas, usando o máximo do espaço.
+// ===================================================================
+function aspectOf(t) {
+  const v = t.querySelector('video');
+  if (v && v.videoWidth && v.videoHeight) return v.videoWidth / v.videoHeight;
+  return t.classList.contains('cam') ? 4 / 3 : 16 / 9;
+}
+function packRows(items, W, H, gap, maxRows) {
+  const n = items.length;
+  if (!n || W <= 0 || H <= 0) return null;
+  let best = null;
+  for (let r = 1; r <= Math.min(n, maxRows || n); r++) {
+    // distribui em r fileiras equilibradas
+    const per = Math.ceil(n / r);
+    const rows = [];
+    for (let i = 0; i < n; i += per) rows.push(items.slice(i, i + per));
+    let h = (H - gap * (rows.length - 1)) / rows.length;
+    for (const row of rows) {
+      const sumA = row.reduce((s, it) => s + it.a, 0);
+      h = Math.min(h, (W - gap * (row.length - 1)) / sumA);
+    }
+    if (h <= 0) continue;
+    const area = items.reduce((s, it) => s + h * h * it.a, 0);
+    if (!best || area > best.area + 1) best = { rows, h, area };
+  }
+  return best;
+}
+function placeIn(container, tiles, opts = {}) {
+  const gap = opts.gap ?? 12;
+  const W = container.clientWidth, H = container.clientHeight;
+  const items = tiles.map((t) => ({ t, a: aspectOf(t) }));
+  const best = packRows(items, W, H, gap, opts.maxRows);
+  if (!best) return;
+  const totalH = best.rows.length * best.h + gap * (best.rows.length - 1);
+  let y = (H - totalH) / 2;
+  for (const row of best.rows) {
+    const rowW = row.reduce((s, it) => s + best.h * it.a, 0) + gap * (row.length - 1);
+    let x = (W - rowW) / 2;
+    for (const it of row) {
+      const w = best.h * it.a;
+      const st = it.t.style;
+      st.left = Math.round(x) + 'px'; st.top = Math.round(y) + 'px';
+      st.width = Math.round(w) + 'px'; st.height = Math.round(best.h) + 'px';
+      x += w + gap;
+    }
+    y += best.h + gap;
+  }
+}
+function fitTiles() {
+  const grid = $('#grid'), focus = $('#focus');
+  if (!grid) return;
+  // ordem fixa: transmissões primeiro, depois câmeras; dentro de cada grupo, por ordem de chegada
+  const rank = (t) => (t.classList.contains('cam') ? 1 : 0) * 1e9 + (+t.dataset.order || 0);
+  const focused = [...focus.children].filter((t) => t.classList.contains('tile'));
+  const rest = [...grid.children].filter((t) => t.classList.contains('tile')).sort((x, y) => rank(x) - rank(y));
+  if (focused.length) placeIn(focus, focused, { gap: 0 });
+  if (rest.length) placeIn(grid, rest, focused.length ? { maxRows: 1, gap: 10 } : {});
+}
+new ResizeObserver(() => fitTiles()).observe(document.getElementById('stage'));
+// quando o vídeo descobre o próprio formato, reorganiza
+document.addEventListener('loadedmetadata', (e) => { if (e.target.closest && e.target.closest('.tile')) fitTiles(); }, true);
+document.addEventListener('resize', (e) => { if (e.target.tagName === 'VIDEO') fitTiles(); }, true);
 
 // ===================================================================
 // Estatísticas (FPS, resolução, Mbps, ping)
