@@ -207,6 +207,19 @@ async function enter() {
     $('#room').classList.toggle('side-collapsed', !!state.cfg.sideCollapsed);
     layout(true);
   });
+  if (window.TMPerms) {
+    try {
+      await TMPerms.init({
+        hubSend,
+        myName: () => state.myName,
+        toast, orbHTML, icon,
+        channels: () => [...state.channels.values()].filter((c) => !c.deleted),
+        onChange: () => { renderChannels(); renderPeople(); renderAdminUI(); if (state.hub) publishPresence(); },
+        onMoveMe: (ch, by) => { const c = state.channels.get(ch); if (c) { joinChannel(ch, { force: true }); toast(`${by || 'Um admin'} moveu você para ${c.name}`); } },
+      });
+    } catch (e) { console.warn('perms', e); }
+  }
+  renderAdminUI();
   connectHub();
 }
 
@@ -244,6 +257,7 @@ function myPresence() {
     deaf: v ? v.deaf : state.pref.deaf,
     live: state.shares.size > 0,
     cam: !!state.cam,
+    pub: window.TMPerms?.myPub?.() || null,
   };
 }
 function hubSend(m) { if (state.hub && state.hub.readyState === 1) state.hub.send(JSON.stringify(m)); }
@@ -274,12 +288,15 @@ function connectHub() {
       state.hubSeen = true;
       state.hubOnline = list;
       for (const n of [...state.presence.keys()]) if (!list.includes(n)) state.presence.delete(n);
-      for (const n of added) { publishPresence(n); publishChannels(n); window.TMSound?.onHubPeerAdded(n); }
+      for (const n of added) { publishPresence(n); publishChannels(n); window.TMSound?.onHubPeerAdded(n); window.TMPerms?.onHubPeerAdded(n); }
       renderChannels();
+    } else if (typeof m.type === 'string' && m.type.startsWith('perm-')) {
+      window.TMPerms?.onHubMessage(m);
     } else if (typeof m.type === 'string' && m.type.startsWith('snd-')) {
       window.TMSound?.onHubMessage(m);
     } else if (m.type === 'presence' && m.from) {
       state.presence.set(m.from, { ch: m.ch || null, inVoice: !!m.inVoice, muted: !!m.muted, deaf: !!m.deaf, live: !!m.live, cam: !!m.cam });
+      if (m.pub) window.TMPerms?.notePresence(m.from, m.pub);
       renderChannels();
     } else if (m.type === 'channels') {
       let changed = false;
@@ -313,7 +330,9 @@ function membersOf(chId) {
 function renderChannels() {
   const box = $('#channels');
   if (!box) return;
-  const list = [...state.channels.values()].filter((c) => !c.deleted).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  const canSee = (id) => !window.TMPerms || TMPerms.canSee(id) || state.channelId === id;
+  const list = [...state.channels.values()].filter((c) => !c.deleted && canSee(c.id)).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  const canManage = canDo('manageChannels');
   // linha de edição que já terminou: volta a ser uma sala normal
   for (const el of $$('.ch', box)) if (el.querySelector('.ch-edit') && state.editing !== el.dataset.id) el.remove();
   const keep = new Set();
@@ -324,14 +343,27 @@ function renderChannels() {
       el = document.createElement('div');
       el.className = 'ch';
       el.dataset.id = c.id;
-      el.innerHTML = `<button class="ch-row">${icon('speaker')}<span class="nm"></span><span class="count"></span><span class="acts"><span class="ren" title="Renomear">${icon('pencil')}</span><span class="del" title="Apagar">${icon('trash')}</span></span></button><div class="ch-members"></div>`;
+      el.innerHTML = `<button class="ch-row">${icon('speaker')}<span class="nm"></span><span class="lock" title="Sala restrita">${icon('lock')}</span><span class="count"></span><span class="acts"><span class="ren" title="Renomear">${icon('pencil')}</span><span class="del" title="Apagar">${icon('trash')}</span></span></button><div class="ch-members"></div>`;
       el.querySelector('.ch-row').onclick = (e) => {
         if (e.target.closest('.ren')) { e.stopPropagation(); startEdit(c.id); return; }
         if (e.target.closest('.del')) { e.stopPropagation(); deleteChannel(c.id); return; }
         joinChannel(c.id);
       };
-      el.querySelector('.ch-row').ondblclick = (e) => { e.preventDefault(); startEdit(c.id); };
+      el.querySelector('.ch-row').ondblclick = (e) => { if (canDo('manageChannels')) { e.preventDefault(); startEdit(c.id); } };
+      el.querySelector('.ch-row').oncontextmenu = (e) => { e.preventDefault(); openChannelMenu(e, c.id); };
+      // soltar uma pessoa arrastada aqui = mover para esta sala
+      el.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/tm-member')) { e.preventDefault(); el.classList.add('drop'); } });
+      el.addEventListener('dragleave', (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove('drop'); });
+      el.addEventListener('drop', (e) => {
+        el.classList.remove('drop');
+        const who = e.dataTransfer.getData('text/tm-member');
+        if (who) { e.preventDefault(); moveMember(who, c.id); }
+      });
     }
+    el.classList.toggle('no-manage', !canManage);
+    const acc = window.TMPerms?.access?.(c.id) || {};
+    el.classList.toggle('restricted', !!acc.restricted);
+    el.classList.toggle('locked', !!acc.restricted && !!window.TMPerms && !TMPerms.canJoin(c.id));
     if (box.children[idx] !== el) box.insertBefore(el, box.children[idx] || null);
     if (state.editing === c.id && !el.querySelector('.ch-edit')) el.querySelector('.ch-row').replaceWith(editRow(c.id, c.name));
     const nm = el.querySelector('.ch-row .nm');
@@ -351,10 +383,14 @@ function renderChannels() {
         r = document.createElement('div');
         r.className = 'member' + (m.me ? ' me' : '');
         r.dataset.name = m.name;
-        r.innerHTML = `${orbHTML(m.name)}<span class="nm"></span><span class="mi"></span>`;
+        r.innerHTML = `${orbHTML(m.name)}<span class="nm"></span><span class="badges"></span><span class="mi"></span>`;
         r.querySelector('.nm').textContent = m.name;
         r.oncontextmenu = (e) => { e.preventDefault(); openPersonMenu(e, m.name, c.id); };
+        r.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/tm-member', m.name); e.dataTransfer.effectAllowed = 'move'; r.classList.add('dragging'); });
+        r.addEventListener('dragend', () => r.classList.remove('dragging'));
       }
+      r.draggable = canDo('moveMembers');
+      paintBadges(r.querySelector('.badges'), m.name);
       if (mbox.children[i] !== r) mbox.insertBefore(r, mbox.children[i] || null);
       const lm = !m.me && isLocalMuted(m.name);
       const k = (m.live ? 'L' : '') + (m.cam ? 'C' : '') + (lm ? 'S' : '') + (m.deaf ? 'D' : m.muted ? 'M' : '');
@@ -442,6 +478,7 @@ function renderChanTitle() {
 
 async function joinChannel(id, opts = {}) {
   if (state.channelId === id) return;
+  if (!opts.force && window.TMPerms && !TMPerms.canJoin(id)) { toast('Sala restrita'); return; }
   if (state.shares.size && !confirm('Trocar de sala vai parar sua transmissão. Continuar?')) return;
   if (state.channelId) leaveChannel(true);
   if (opts.watch) state.autoWatch = opts.watch;
@@ -853,6 +890,8 @@ function openPersonMenu(e, name, chId) {
       menuHead(m, name, 'Você');
       menuItem(m, state.voice?.muted || state.pref.muted ? 'mic' : 'mic-off', state.voice?.muted || state.pref.muted ? 'Desmutar' : 'Mutar', toggleMute);
       menuItem(m, 'gear', 'Configurações de voz', () => $('#settingsBtn').click());
+      if (window.TMPerms) { menuSep(m); menuItem(m, 'shield', 'Servidor e cargos', () => TMPerms.openServer()); }
+      if (canDo('moveMembers')) addMoveItems(m, name);
     });
     return;
   }
@@ -873,7 +912,59 @@ function openPersonMenu(e, name, chId) {
         menuItem(m, 'play', 'Assistir transmissão', () => watchPerson(name, chId));
       }
     }
+    if (window.TMPerms && (canDo('manageRoles') || canDo('moveMembers'))) {
+      menuSep(m);
+      if (canDo('manageRoles')) menuItem(m, 'shield', 'Cargos', () => TMPerms.openMember(name));
+      if (canDo('moveMembers')) addMoveItems(m, name);
+    }
   });
+}
+
+// ---- administração (cargos, salas restritas, mover pessoas) ----
+function canDo(perm) { return !window.TMPerms || TMPerms.isOwner() || TMPerms.can(perm); }
+function moveMember(name, chId) {
+  if (!canDo('moveMembers')) { toast('Você não tem permissão para mover pessoas'); return; }
+  const c = state.channels.get(chId);
+  if (name === state.myName) { joinChannel(chId); return; }
+  if (window.TMPerms?.move(name, chId)) toast(`${name} → ${c?.name || 'sala'}`);
+}
+function addMoveItems(m, name) {
+  const cur = name === state.myName ? state.channelId : state.presence.get(name)?.ch;
+  const rooms = [...state.channels.values()].filter((c) => !c.deleted && c.id !== cur && (!window.TMPerms || TMPerms.canSee(c.id)));
+  if (!rooms.length) return;
+  m.insertAdjacentHTML('beforeend', '<div class="cm-label">Mover para</div>');
+  for (const c of rooms.slice(0, 8)) menuItem(m, 'speaker', c.name, () => moveMember(name, c.id));
+}
+function openChannelMenu(e, chId) {
+  const c = state.channels.get(chId);
+  if (!c) return;
+  openMenu(e, (m) => {
+    m.insertAdjacentHTML('beforeend', `<div class="cm-head cm-room">${icon('speaker')}<div class="cm-t"><b></b><small></small></div></div>`);
+    m.querySelector('.cm-room b').textContent = c.name;
+    const acc = window.TMPerms?.access?.(chId) || {};
+    m.querySelector('.cm-room small').textContent = acc.hidden ? 'Oculta' : acc.restricted ? 'Restrita' : 'Aberta';
+    if (state.channelId !== chId) menuItem(m, 'join', 'Entrar', () => joinChannel(chId));
+    if (canDo('manageChannels')) {
+      if (window.TMPerms) menuItem(m, 'lock', 'Acesso da sala', () => TMPerms.openChannel(chId));
+      menuItem(m, 'pencil', 'Renomear', () => startEdit(chId));
+      menuSep(m);
+      menuItem(m, 'trash', 'Apagar sala', () => deleteChannel(chId), { danger: true });
+    }
+  });
+}
+function paintBadges(el, name) {
+  if (!el || !window.TMPerms) return;
+  const owner = TMPerms.isOwnerName?.(name);
+  const roles = TMPerms.rolesOf?.(name) || [];
+  const k = (owner ? 'O' : '') + roles.map((r) => r.name + r.color).join('|');
+  if (el.dataset.k === k) return;
+  el.dataset.k = k;
+  el.innerHTML = (owner ? `<span class="crown" title="Dono">${icon('crown')}</span>` : '') +
+    roles.slice(0, 3).map((r) => `<i class="rdot" style="background:${r.color}" title="${esc(r.name)}"></i>`).join('');
+}
+function renderAdminUI() {
+  const add = $('#addRoomBtn');
+  if (add) add.classList.toggle('hidden', !canDo('manageChannels'));
 }
 
 // botão direito numa transmissão: só a transmissão
@@ -1849,6 +1940,15 @@ document.addEventListener('keydown', (e) => {
 });
 
 $('#addRoomBtn').onclick = () => startEdit('__new__');
+$('#homeBtn').oncontextmenu = (e) => {
+  e.preventDefault();
+  openMenu(e, (m) => {
+    menuHead(m, state.myName, window.TMPerms?.isOwner() ? 'Dono do servidor' : 'Servidor');
+    if (window.TMPerms) menuItem(m, 'shield', 'Servidor e cargos', () => TMPerms.openServer());
+    menuSep(m);
+    menuItem(m, 'leave', 'Sair do TriMeet', () => $('#homeBtn').click(), { danger: true });
+  });
+};
 $('#settingsBtn').onclick = () => { if (window.TMSettings) TMSettings.open(); else toast('Configurações chegam na próxima versão'); };
 setInterval(() => send({ type: 'ping' }), 25000);
 $('#shareBtn').onclick = openShareModal;

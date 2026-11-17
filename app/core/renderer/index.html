@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="settings.css" />
   <link rel="stylesheet" href="soundboard.css" />
+  <link rel="stylesheet" href="perms.css" />
 </head>
 <body>
   <!-- Ícones -->
@@ -58,6 +59,10 @@
       <symbol id="i-camera-off" viewBox="0 0 24 24"><path d="M10 6h2.5a3 3 0 0 1 3 3v1.5L21 7.5v9l-2-1.1M15.5 15v.5a3 3 0 0 1-3 3h-7a3 3 0 0 1-3-3V9a3 3 0 0 1 2.4-2.9M3 3l18 18"/></symbol>
       <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
       <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+      <symbol id="i-crown" viewBox="0 0 24 24"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z"/></symbol>
+      <symbol id="i-move" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/><path d="M5 5v14"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.4-8 9-4.6-.6-8-4.5-8-9V6z"/></symbol>
       <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
       <radialGradient id="orbG" cx="50%" cy="82%" r="80%"><stop offset="0" stop-color="#07060a"/><stop offset=".30" stop-color="#0b0912"/><stop offset=".40" stop-color="#ff8a3d"/><stop offset=".47" stop-color="#ffd2a6"/><stop offset=".55" stop-color="#9fb7d9"/><stop offset=".66" stop-color="#5d7fc4"/><stop offset=".80" stop-color="#2c3766"/><stop offset="1" stop-color="#151a33"/></radialGradient>
       <linearGradient id="orbH" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
@@ -235,6 +240,8 @@
   <script src="audio.js"></script>
   <script src="settings.js"></script>
   <script src="soundboard.js"></script>
+  <script src="vendor/nacl/nacl-fast.min.js"></script>
+  <script src="perms.js"></script>
   <script src="glass.js"></script>
   <script src="halftone.js"></script>
   <script src="app.js"></script>
