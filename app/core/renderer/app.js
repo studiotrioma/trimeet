@@ -180,11 +180,21 @@ function renderLogin(pop) {
   $('.name-field').classList.toggle('need', !c.name && document.activeElement !== $('#nameInput'));
 }
 
-const serverBase = () => (state.cfg.server || CONF.server || '').replace(/\/+$/, '');
+const serverBase = () => String((typeof state.cfg.server === 'string' && state.cfg.server) || CONF.server || '').replace(/\/+$/, '');
 const wsFor = (room) => `${serverBase().replace(/^http/, 'ws')}/ws?room=${encodeURIComponent(room)}&key=${encodeURIComponent(CONF.key)}`;
 
 async function enter() {
+  try { await enterInner(); }
+  catch (e) {
+    console.error('enter', e);
+    $('#loginErr').textContent = 'Não deu para entrar. Tente de novo.';
+    state.loggedOut = true;
+    renderLogin();
+  }
+}
+async function enterInner() {
   const c = state.cfg;
+  if (c.server && typeof c.server !== 'string') delete c.server; // conserta config da 5.0/6.0
   $('#loginErr').textContent = '';
   $('#enterBtn').disabled = true;
   if (!serverBase()) { $('#loginErr').textContent = 'Servidor não configurado'; renderLogin(); return; }

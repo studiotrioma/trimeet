@@ -1,1 +1,1 @@
-{"version": "6.0", "notes": "Fechar no X deixa o TriMeet rodando na bandeja (continua na chamada). Abrir de novo volta para a mesma janela. Corrigido o botão Entrar travado.", "bundle": "/update/core-6.0.bin", "sha256": "d8876b06e7f5b36aac79f9e4e5c04cf181d58a07260668a6e513224f7827f7e7"}
+{"version": "7.0", "notes": "Corrigido: botão Entrar travava depois do primeiro uso (configuração dos cargos se misturava com o endereço do servidor).", "bundle": "/update/core-7.0.bin", "sha256": "3503f5f9625124942470c048ea17f80ce61347e940bfa56dee78a56d7f420498"}

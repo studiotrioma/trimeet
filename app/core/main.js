@@ -170,8 +170,24 @@ app.whenReady().then(() => {
     try { fs.writeFileSync(soundsPath(), JSON.stringify(Array.isArray(list) ? list : [])); } catch {}
     return true;
   });
+  // identidade, código de dono e cargos são do módulo de cargos: a tela principal não sobrescreve
+  const PERM_KEYS = ['identity', 'ownerSeed', 'perms'];
   ipcMain.handle('save-config', (_e, cfg) => {
-    try { fs.writeFileSync(cfgPath(), JSON.stringify(cfg, null, 2)); } catch {}
+    try {
+      if (!cfg || typeof cfg !== 'object') return false;
+      const out = { ...cfg };
+      if (out._perms) delete out._perms;
+      else {
+        let disk = {};
+        try { disk = JSON.parse(fs.readFileSync(cfgPath(), 'utf8')) || {}; } catch {}
+        for (const k of PERM_KEYS) { if (k in disk) out[k] = disk[k]; else delete out[k]; }
+      }
+      if (out.server && typeof out.server !== 'string') {
+        if (!out.perms) out.perms = out.server; // migra formato antigo
+        delete out.server;
+      }
+      fs.writeFileSync(cfgPath(), JSON.stringify(out, null, 2));
+    } catch {}
     return true;
   });
   ipcMain.handle('local-ips', () => {

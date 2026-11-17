@@ -56,9 +56,10 @@
         const c = (await window.trimeet.loadConfig()) || {};
         c.identity = cfg.identity;
         if (cfg.ownerSeed) c.ownerSeed = cfg.ownerSeed; else delete c.ownerSeed;
-        c.server = { cur, prev };
+        c.perms = { cur, prev };
+        if (c.server && typeof c.server === 'object') delete c.server; // formato antigo (5.0/6.0)
         cfg = c;
-        await window.trimeet.saveConfig(c);
+        await window.trimeet.saveConfig({ ...c, _perms: true });
       } catch {}
     }
 
@@ -218,7 +219,7 @@
       if (cfg.ownerSeed) useOwnerSeed(cfg.ownerSeed);
       // estado guardado: só reaproveita se a assinatura ainda confere
       cur = { doc: baseDoc(), sig: '' }; prev = null;
-      const sv = cfg.server;
+      const sv = cfg.perms || (cfg.server && typeof cfg.server === 'object' ? cfg.server : null);
       if (sv && sv.cur && sv.cur.doc && sv.cur.sig && verify(sv.cur.doc, sv.cur.sig, sv.cur.doc.by)) {
         cur = sv.cur;
         if (sv.prev && sv.prev.doc && (sv.prev.sig === '' || verify(sv.prev.doc, sv.prev.sig, sv.prev.doc.by))) prev = sv.prev;
