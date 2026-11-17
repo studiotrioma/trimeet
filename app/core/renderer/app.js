@@ -42,6 +42,10 @@ const state = {
   presence: new Map(),        // nome -> { ch, inVoice, muted, deaf, live }
   channelId: null,
   editing: null,              // id da sala sendo criada/renomeada
+  watching: new Set(),        // transmissões que eu escolhi assistir
+  thumbs: new Map(),          // id da transmissão -> miniatura (jpeg)
+  autoWatch: null,            // assistir fulano assim que a transmissão dele aparecer
+  cam: null,                  // minha câmera: { id, stream, tile }
   focusId: null,
   selectedSource: null,
   srcTab: 'screen',
@@ -238,6 +242,7 @@ function myPresence() {
     muted: v ? v.muted : state.pref.muted,
     deaf: v ? v.deaf : state.pref.deaf,
     live: state.shares.size > 0,
+    cam: !!state.cam,
   };
 }
 function hubSend(m) { if (state.hub && state.hub.readyState === 1) state.hub.send(JSON.stringify(m)); }
@@ -268,7 +273,7 @@ function connectHub() {
       for (const n of added) { publishPresence(n); publishChannels(n); }
       renderChannels();
     } else if (m.type === 'presence' && m.from) {
-      state.presence.set(m.from, { ch: m.ch || null, inVoice: !!m.inVoice, muted: !!m.muted, deaf: !!m.deaf, live: !!m.live });
+      state.presence.set(m.from, { ch: m.ch || null, inVoice: !!m.inVoice, muted: !!m.muted, deaf: !!m.deaf, live: !!m.live, cam: !!m.cam });
       renderChannels();
     } else if (m.type === 'channels') {
       let changed = false;
@@ -342,13 +347,16 @@ function renderChannels() {
         r.dataset.name = m.name;
         r.innerHTML = `${orbHTML(m.name)}<span class="nm"></span><span class="mi"></span>`;
         r.querySelector('.nm').textContent = m.name;
+        r.oncontextmenu = (e) => { e.preventDefault(); openPersonMenu(e, m.name, c.id); };
       }
       if (mbox.children[i] !== r) mbox.insertBefore(r, mbox.children[i] || null);
-      const k = (m.live ? 'L' : '') + (m.deaf ? 'D' : m.muted ? 'M' : '');
+      const k = (m.live ? 'L' : '') + (m.cam ? 'C' : '') + (m.deaf ? 'D' : m.muted ? 'M' : '');
       const mi = r.querySelector('.mi');
       if (mi.dataset.k !== k) {
         mi.dataset.k = k;
-        mi.innerHTML = (m.deaf ? icon('deaf') : m.muted ? icon('mic-off') : '') + (m.live ? '<span class="lv">AO VIVO</span>' : '');
+        mi.innerHTML = (m.cam ? `<span class="camic">${icon('camera')}</span>` : '') + (m.deaf ? icon('deaf') : m.muted ? icon('mic-off') : '') + (m.live ? '<span class="lv" title="Assistir">AO VIVO</span>' : '');
+        const lv = mi.querySelector('.lv');
+        if (lv) lv.onclick = (e) => { e.stopPropagation(); watchPerson(m.name, c.id); };
       }
     });
   });
@@ -428,10 +436,11 @@ function renderChanTitle() {
   $('#emptyTxt').textContent = ch ? 'Ninguém ao vivo' : 'Escolha uma sala';
 }
 
-async function joinChannel(id) {
+async function joinChannel(id, opts = {}) {
   if (state.channelId === id) return;
   if (state.shares.size && !confirm('Trocar de sala vai parar sua transmissão. Continuar?')) return;
   if (state.channelId) leaveChannel(true);
+  if (opts.watch) state.autoWatch = opts.watch;
   state.channelId = id;
   state.leaving = false;
   state.wsUrl = wsFor('sala-' + id);
@@ -448,13 +457,20 @@ function leaveChannel(switching) {
   if (!state.channelId) return;
   state.leaving = true;
   leaveVoice(true);
+  if (state.cam) stopCamera(true);
   for (const id of [...state.shares.keys()]) stopShare(id);
   for (const n of [...state.peers.keys()]) closePeer(n);
   for (const [id] of state.pending) state.pending.delete(id);
+  state.watching.clear();
+  state.thumbs.clear();
+  state.autoWatch = null;
+  for (const c of $$('.tile.card')) c.remove();
   state.online = [];
   if (state.ws) { try { state.ws.close(); } catch {} state.ws = null; }
   state.channelId = null;
   state.focusId = null;
+  renderDock();
+  renderCam();
   if (!switching) chime('leave');
   renderPeople();
   renderChanTitle();
@@ -522,6 +538,16 @@ function onSignal(m) {
     case 'shares':
       onRemoteShares(m.from, m.list || []);
       break;
+    case 'watch':
+      handleWatch(m.from, m.id, !!m.on);
+      break;
+    case 'thumb':
+      if (m.id && typeof m.data === 'string' && m.data.startsWith('data:image/')) {
+        state.thumbs.set(m.id, m.data);
+        const img = document.querySelector(`.tile.card[data-id="${CSS.escape(m.id)}"] .thumb`);
+        if (img) { img.src = m.data; img.classList.add('on'); }
+      }
+      break;
     case 'vstate':
       state.vstate.set(m.from, { inVoice: !!m.inVoice, muted: !!m.muted, deaf: !!m.deaf });
       renderPeople();
@@ -566,9 +592,9 @@ function ensurePeer(name) {
   };
   pc.ontrack = (ev) => onRemoteTrack(name, ev);
 
-  // envia o que eu já estiver transmitindo
-  for (const [id, share] of state.shares) addShareToPeer(peer, id, share);
+  // a voz e a câmera vão para todos da sala; as telas só para quem clicar em Assistir
   if (state.voice) addVoiceToPeer(peer);
+  if (state.cam) addCamToPeer(peer);
   return peer;
 }
 
@@ -580,6 +606,9 @@ function closePeer(name) {
   for (const [id, r] of state.remotes) if (r.from === name) removeRemote(id);
   for (const [id, v] of state.voices) if (v.from === name) removeVoice(id);
   for (const [id, p] of state.pending) if (p.from === name) state.pending.delete(id);
+  for (const sh of state.shares.values()) if (sh.watchers?.delete(name)) paintViewers(sh);
+  renderCards();
+  renderDock();
 }
 
 async function handleSignal(from, { description, candidate }) {
@@ -659,13 +688,25 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
   }
 
   const id = stream.id;
-  const share = { stream, label, kind, opts };
+  const share = { stream, label, kind, opts, watchers: new Set(), thumbT: null };
   state.shares.set(id, share);
   if (v) v.onended = () => stopShare(id);
 
   share.tile = makeTile({ id, name: state.myName, label, kind, stream, mine: true });
-  for (const peer of state.peers.values()) addShareToPeer(peer, id, share);
+  paintViewers(share);
+  // miniatura para o cartão de quem ainda não está assistindo
+  const sendThumb = () => {
+    const vid = share.tile?.querySelector('video');
+    if (!vid || vid.readyState < 2 || !vid.videoWidth) return;
+    const c = document.createElement('canvas');
+    c.width = 384; c.height = Math.round(384 * vid.videoHeight / vid.videoWidth);
+    c.getContext('2d').drawImage(vid, 0, 0, c.width, c.height);
+    send({ type: 'thumb', id, data: c.toDataURL('image/jpeg', 0.6) });
+  };
+  setTimeout(sendThumb, 1500);
+  share.thumbT = setInterval(sendThumb, 6000);
   announceShares();
+  renderDock();
   renderPeople();
   publishPresence();
 }
@@ -674,6 +715,7 @@ function stopShare(id) {
   const share = state.shares.get(id);
   if (!share) return;
   state.shares.delete(id);
+  clearInterval(share.thumbT);
   share.stream.getTracks().forEach((t) => t.stop());
   for (const peer of state.peers.values()) {
     const senders = peer.senders.get(id) || [];
@@ -685,6 +727,299 @@ function stopShare(id) {
   announceShares();
   renderPeople();
   publishPresence();
+  renderDock();
+}
+
+// alguém clicou em Assistir (ou parou) a minha transmissão
+function handleWatch(from, id, on) {
+  const share = state.shares.get(id);
+  const peer = state.peers.get(from) || (on ? ensurePeer(from) : null);
+  if (!share || !peer) return;
+  if (on && !share.watchers.has(from)) {
+    share.watchers.add(from);
+    addShareToPeer(peer, id, share);
+  } else if (!on && share.watchers.has(from)) {
+    share.watchers.delete(from);
+    for (const snd of peer.senders.get(id) || []) { try { peer.pc.removeTrack(snd); } catch {} }
+    peer.senders.delete(id);
+  }
+  paintViewers(share);
+}
+function paintViewers(share) {
+  const el = share.tile?.querySelector('.viewers');
+  if (!el) return;
+  const n = share.watchers.size;
+  el.innerHTML = n ? `${icon('eye')}<span>${n}</span>` : '';
+  el.title = n ? [...share.watchers].join(', ') + ' assistindo' : '';
+}
+
+// ---- volumes por pessoa (voz e transmissão), guardados no PC ----
+function getVol(kind, name) {
+  const v = state.cfg.volumes?.[kind]?.[name];
+  return typeof v === 'number' ? v : 1;
+}
+function isLocalMuted(name) { return !!state.cfg.volumes?.muted?.[name]; }
+let volSaveT;
+function saveVolumes() { clearTimeout(volSaveT); volSaveT = setTimeout(() => window.trimeet.saveConfig(state.cfg), 400); }
+function setVol(kind, name, value) {
+  const vols = state.cfg.volumes || (state.cfg.volumes = { voice: {}, stream: {}, muted: {} });
+  vols[kind] = vols[kind] || {};
+  vols[kind][name] = Math.max(0, Math.min(1, value));
+  if (kind === 'voice') {
+    for (const v of state.voices.values()) if (v.from === name) v.audio.volume = vols.voice[name];
+  } else {
+    for (const r of state.remotes.values()) if (r.from === name) {
+      const video = r.tile.querySelector('video');
+      video.volume = vols.stream[name]; video.muted = vols.stream[name] === 0;
+      const sl = r.tile.querySelector('.vol input'); if (sl) sl.value = vols.stream[name];
+      r.tile._paintVol?.();
+    }
+  }
+  saveVolumes();
+}
+function setLocalMute(name, on) {
+  const vols = state.cfg.volumes || (state.cfg.volumes = { voice: {}, stream: {}, muted: {} });
+  vols.muted = vols.muted || {};
+  if (on) vols.muted[name] = true; else delete vols.muted[name];
+  const deaf = state.voice?.deaf;
+  for (const v of state.voices.values()) if (v.from === name) v.audio.muted = !state.voice || deaf || on;
+  saveVolumes();
+}
+
+// ---- menu do botão direito ----
+let ctxEl = null;
+function closeMenu() {
+  if (!ctxEl) return;
+  const el = ctxEl; ctxEl = null;
+  el.classList.add('leaving');
+  setTimeout(() => el.remove(), 160);
+}
+function openMenu(e, build) {
+  closeMenu();
+  const m = document.createElement('div');
+  m.className = 'ctx-menu glass';
+  build(m);
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  const x = Math.min(e.clientX, innerWidth - r.width - 10), y = Math.min(e.clientY, innerHeight - r.height - 10);
+  m.style.left = Math.max(10, x) + 'px';
+  m.style.top = Math.max(10, y) + 'px';
+  m.style.transformOrigin = `${e.clientX - x}px ${e.clientY - y}px`;
+  ctxEl = m;
+}
+document.addEventListener('mousedown', (e) => { if (ctxEl && !ctxEl.contains(e.target)) closeMenu(); }, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+window.addEventListener('blur', closeMenu);
+window.addEventListener('resize', closeMenu);
+
+function menuHead(m, name, sub) {
+  m.insertAdjacentHTML('beforeend', `<div class="cm-head">${orbHTML(name)}<div><b></b><span></span></div></div>`);
+  m.querySelector('.cm-head b').textContent = name;
+  m.querySelector('.cm-head span').textContent = sub || '';
+}
+function menuSlider(m, ic, label, value, onInput) {
+  const row = document.createElement('div');
+  row.className = 'cm-slider';
+  row.innerHTML = `<div class="cm-sl-top">${icon(ic)}<span>${label}</span><b class="mono"></b></div><input type="range" min="0" max="1" step="0.01">`;
+  const inp = row.querySelector('input'), val = row.querySelector('b');
+  const paint = () => { inp.style.setProperty('--p', inp.value * 100 + '%'); val.textContent = Math.round(inp.value * 100) + '%'; };
+  inp.value = value; paint();
+  inp.oninput = () => { paint(); onInput(+inp.value); };
+  m.appendChild(row);
+}
+function menuItem(m, ic, label, onClick, opts = {}) {
+  const b = document.createElement('button');
+  b.className = 'cm-item' + (opts.danger ? ' danger' : '') + (opts.on ? ' on' : '');
+  b.innerHTML = `${icon(ic)}<span></span>${opts.check != null ? `<i class="cm-check ${opts.check ? 'on' : ''}"></i>` : ''}`;
+  b.querySelector('span').textContent = label;
+  b.onclick = () => { onClick(); closeMenu(); };
+  m.appendChild(b);
+}
+function menuSep(m) { m.insertAdjacentHTML('beforeend', '<div class="cm-sep"></div>'); }
+
+// botão direito numa pessoa: voz + (se estiver ao vivo) transmissão
+function openPersonMenu(e, name, chId) {
+  if (name === state.myName) {
+    openMenu(e, (m) => {
+      menuHead(m, name, 'Você');
+      menuItem(m, state.voice?.muted || state.pref.muted ? 'mic' : 'mic-off', state.voice?.muted || state.pref.muted ? 'Desmutar' : 'Mutar', toggleMute);
+      menuItem(m, 'gear', 'Configurações de voz', () => $('#settingsBtn').click());
+    });
+    return;
+  }
+  const here = chId === state.channelId;
+  const meta = state.remoteMeta.get(name);
+  const live = here ? [...(meta?.entries() || [])].find(([, x]) => x.kind === 'screen' || x.kind === 'window') : (state.presence.get(name)?.live ? ['?', {}] : null);
+  const watchingId = live && state.watching.has(live[0]) ? live[0] : null;
+  openMenu(e, (m) => {
+    menuHead(m, name, here ? (live ? 'Ao vivo nesta sala' : 'Nesta sala') : (state.channels.get(chId)?.name ? 'Na sala ' + state.channels.get(chId).name : ''));
+    menuSlider(m, 'headset', 'Volume da voz', getVol('voice', name), (v) => setVol('voice', name, v));
+    menuItem(m, 'mic-off', 'Silenciar para mim', () => setLocalMute(name, !isLocalMuted(name)), { check: isLocalMuted(name) });
+    if (live) {
+      menuSep(m);
+      if (watchingId) {
+        menuSlider(m, 'screen', 'Volume da transmissão', getVol('stream', name), (v) => setVol('stream', name, v));
+        menuItem(m, 'eye-off', 'Parar de assistir', () => unwatch(watchingId), { danger: true });
+      } else {
+        menuItem(m, 'play', 'Assistir transmissão', () => watchPerson(name, chId));
+      }
+    }
+  });
+}
+
+// botão direito numa transmissão: só a transmissão
+function openTileMenu(e, { id, name, mine, tile }) {
+  openMenu(e, (m) => {
+    if (tile.classList.contains('card')) {
+      menuHead(m, name, 'Ao vivo');
+      menuItem(m, 'play', 'Assistir', () => tile.click());
+      return;
+    }
+    menuHead(m, mine ? state.myName : name, mine ? 'Sua transmissão' : 'Transmissão');
+    if (!mine) menuSlider(m, 'vol', 'Volume da transmissão', getVol('stream', name), (v) => setVol('stream', name, v));
+    const pinned = state.focusId === id;
+    menuItem(m, pinned ? 'shrink' : 'expand', pinned ? 'Desafixar' : 'Fixar em destaque', () => { state.focusId = pinned ? null : id; layout(); });
+    menuItem(m, 'full', 'Tela cheia', () => toggleFullscreen(tile));
+    menuSep(m);
+    if (state.cam && id === state.cam.id) menuItem(m, 'camera-off', 'Desligar câmera', toggleCamera, { danger: true });
+    else if (mine) menuItem(m, 'stop', 'Parar transmissão', () => stopShare(id), { danger: true });
+    else if (!tile.classList.contains('cam')) menuItem(m, 'eye-off', 'Parar de assistir', () => unwatch(id), { danger: true });
+  });
+}
+
+// ---- câmera (todos da sala veem automaticamente, como no Discord) ----
+function applyCamParams(sender) {
+  if (!sender.track) return;
+  const p = sender.getParameters();
+  if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+  p.encodings[0].maxBitrate = 1_500_000;
+  p.encodings[0].maxFramerate = 30;
+  sender.setParameters(p).catch(() => {});
+}
+function addCamToPeer(peer) {
+  const c = state.cam;
+  const track = c.stream.getVideoTracks()[0];
+  if (!track) return;
+  const sender = peer.pc.addTrack(track, c.stream);
+  applyCamParams(sender);
+  peer.senders.set(c.id, [sender]);
+}
+async function toggleCamera() {
+  if (state.cam) return stopCamera();
+  if (!state.channelId) return;
+  let stream;
+  const camId = state.cfg.audio?.camId;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, deviceId: camId ? { ideal: camId } : undefined },
+      audio: false,
+    });
+  } catch (e) {
+    toast(e && e.name === 'NotFoundError' ? 'Nenhuma câmera encontrada' : 'Câmera bloqueada — libere em Configurações do Windows › Privacidade › Câmera');
+    return;
+  }
+  if (!state.channelId) { stream.getTracks().forEach((t) => t.stop()); return; }
+  const v = stream.getVideoTracks()[0];
+  if (v) { v.contentHint = 'motion'; v.onended = () => stopCamera(); }
+  state.cam = { id: stream.id, stream, tile: null };
+  state.cam.tile = makeTile({ id: stream.id, name: state.myName, label: 'Câmera', kind: 'camera', stream, mine: true });
+  for (const peer of state.peers.values()) addCamToPeer(peer);
+  announceShares();
+  publishPresence();
+  renderCam();
+}
+function stopCamera(silent) {
+  const c = state.cam;
+  if (!c) return;
+  state.cam = null;
+  c.stream.getTracks().forEach((t) => t.stop());
+  for (const peer of state.peers.values()) {
+    for (const snd of peer.senders.get(c.id) || []) { try { peer.pc.removeTrack(snd); } catch {} }
+    peer.senders.delete(c.id);
+  }
+  if (state.focusId === c.id) state.focusId = null;
+  removeTile(c.tile);
+  if (!silent) { announceShares(); publishPresence(); }
+  renderCam();
+}
+function renderCam() {
+  const b = $('#camBtn');
+  if (!b) return;
+  b.classList.toggle('on', !!state.cam);
+  b.innerHTML = icon(state.cam ? 'camera' : 'camera-off');
+  b.title = state.cam ? 'Desligar câmera' : 'Ligar câmera';
+}
+
+// ---- assistir transmissões (estilo Discord) ----
+function watch(from, id) {
+  if (state.watching.has(id)) return;
+  state.watching.add(id);
+  send({ type: 'watch', to: from, id, on: true });
+  const card = document.querySelector(`.tile.card[data-id="${CSS.escape(id)}"]`);
+  if (card) card.classList.add('loading');
+  renderDock();
+}
+function unwatch(id) {
+  if (!state.watching.has(id)) return;
+  state.watching.delete(id);
+  const r = state.remotes.get(id);
+  let from = r?.from;
+  if (!from) for (const [n, meta] of state.remoteMeta) if (meta.has(id)) from = n;
+  if (from) send({ type: 'watch', to: from, id, on: false });
+  removeRemote(id);
+  renderDock();
+}
+function unwatchAll() { for (const id of [...state.watching]) unwatch(id); }
+function watchPerson(name, chId) {
+  if (name === state.myName) return;
+  if (chId && chId !== state.channelId) { joinChannel(chId, { watch: name }); return; }
+  const meta = state.remoteMeta.get(name);
+  const first = meta && [...meta.entries()].find(([, m]) => m.kind === 'screen' || m.kind === 'window');
+  if (first) watch(name, first[0]);
+  else state.autoWatch = name;
+}
+
+// cartões "Fulano está ao vivo · Assistir" para quem ainda não está vendo
+function renderCards() {
+  const want = new Map();
+  for (const [from, meta] of state.remoteMeta) {
+    for (const [id, m] of meta) if ((m.kind === 'screen' || m.kind === 'window') && !state.remotes.has(id)) want.set(id, { from, ...m });
+  }
+  for (const c of $$('.tile.card')) if (!want.has(c.dataset.id)) c.remove();
+  for (const [id, m] of want) {
+    let c = document.querySelector(`.tile.card[data-id="${CSS.escape(id)}"]`);
+    if (!c) {
+      c = document.createElement('div');
+      c.className = 'tile card';
+      c.dataset.id = id;
+      c.style.viewTransitionName = 'tile-' + (++vtCount);
+      c.innerHTML = `<img class="thumb" alt="">
+        <div class="card-body">
+          <span class="card-orb">${orbHTML(m.from)}</span>
+          <div class="card-txt"><b></b><span>${icon(m.kind === 'window' ? 'window' : 'screen')}<i></i></span></div>
+          <button class="btn primary watch">${icon('play')}Assistir</button>
+          <span class="card-wait"><span class="spinner"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>Conectando…</span>
+        </div>
+        <span class="chip live-chip"><span class="dot"></span>AO VIVO</span>`;
+      c.querySelector('.card-txt b').textContent = m.from;
+      c.onclick = () => watch(m.from, id);
+      c.oncontextmenu = (e) => { e.preventDefault(); openTileMenu(e, { id, name: m.from, mine: false, tile: c }); };
+      const th = state.thumbs.get(id);
+      if (th) { const img = c.querySelector('.thumb'); img.src = th; img.classList.add('on'); }
+      $('#grid').appendChild(c);
+    }
+    c.querySelector('.card-txt i').textContent = m.label;
+    c.classList.toggle('loading', state.watching.has(id));
+  }
+  layout(true);
+}
+
+// barra de baixo: Compartilhar · Parar transmissão · Parar de assistir · Sair
+function renderDock() {
+  const sb = $('#stopShareBtn'), wb = $('#stopWatchBtn');
+  if (!sb) return;
+  sb.classList.toggle('hidden', state.shares.size === 0);
+  wb.classList.toggle('hidden', state.watching.size === 0);
 }
 
 function addShareToPeer(peer, id, share) {
@@ -736,12 +1071,14 @@ function applyAllParams(peer) {
     const share = state.shares.get(id);
     if (share) senders.forEach((s) => applyParams(s, share.opts));
     else if (state.voice && id === state.voice.id) senders.forEach(applyVoiceParams);
+    else if (state.cam && id === state.cam.id) senders.forEach(applyCamParams);
   }
 }
 
 function announceShares(to) {
   const list = [...state.shares.entries()].map(([id, s]) => ({ id, label: s.label, kind: s.kind }));
   if (state.voice) list.push({ id: state.voice.id, label: 'Voz', kind: 'voice' });
+  if (state.cam) list.push({ id: state.cam.id, label: 'Câmera', kind: 'camera' });
   send(to ? { type: 'shares', to, list } : { type: 'shares', list });
 }
 
@@ -756,11 +1093,19 @@ function onRemoteShares(from, list) {
     if (!meta.has(id)) removeRemote(id);
     else {
       r.tile.querySelector('.ltxt').textContent = meta.get(id).label;
-      r.tile.querySelector('.scr use').setAttribute('href', meta.get(id).kind === 'window' ? '#i-window' : '#i-screen');
+      r.tile.querySelector('.scr use').setAttribute('href', meta.get(id).kind === 'window' ? '#i-window' : meta.get(id).kind === 'camera' ? '#i-camera' : '#i-screen');
+      r.tile.classList.toggle('cam', meta.get(id).kind === 'camera');
     }
   }
   for (const [id, v] of state.voices) if (v.from === from && !meta.has(id)) removeVoice(id);
   for (const [id, p] of state.pending) if (p.from === from && meta.has(id)) classifyStream(p.from, p.stream, p.receivers);
+  for (const id of [...state.watching]) if (![...state.remoteMeta.values()].some((mm) => mm.has(id))) state.watching.delete(id);
+  if (state.autoWatch === from) {
+    const first = [...meta.entries()].find(([, m]) => m.kind === 'screen' || m.kind === 'window');
+    if (first) { state.autoWatch = null; watch(from, first[0]); }
+  }
+  renderCards();
+  renderDock();
   renderPeople();
 }
 
@@ -806,8 +1151,10 @@ function removeRemote(id) {
   const r = state.remotes.get(id);
   if (!r) return;
   state.remotes.delete(id);
+  state.watching.delete(id);
   if (state.focusId === id) state.focusId = null;
   removeTile(r.tile);
+  setTimeout(() => { renderCards(); renderDock(); }, 30);
 }
 
 // ===================================================================
@@ -815,19 +1162,21 @@ function removeRemote(id) {
 // ===================================================================
 function makeTile({ id, name, label, kind, stream, mine }) {
   const t = document.createElement('div');
-  t.className = 'tile' + (mine ? ' mine' : '');
+  t.className = 'tile' + (mine ? ' mine' : '') + (kind === 'camera' ? ' cam' : '');
   t.dataset.id = id;
   t.style.viewTransitionName = 'tile-' + (++vtCount);
   t.innerHTML = `
     <video autoplay playsinline ${mine ? 'muted' : ''}></video>
-    <div class="chip label">${orbHTML(name)}<span class="who"></span><span class="scr">${icon(kind === 'window' ? 'window' : 'screen')}<span class="ltxt"></span></span></div>
+    <div class="chip label">${orbHTML(name)}<span class="who"></span><span class="scr">${icon(kind === 'window' ? 'window' : kind === 'camera' ? 'camera' : 'screen')}<span class="ltxt"></span></span></div>
     <div class="chip stats"></div>
     <div class="chip ctrls">
       ${mine ? '' : `<div class="vol"><button class="btn icon mute" title="Mudo">${icon('vol')}</button><input type="range" min="0" max="1" step="0.01" value="1" title="Volume"></div>`}
+      <button class="btn icon sbtn" title="Estatísticas">${icon('chart')}</button>
       <button class="btn icon fbtn" title="Destacar">${icon('expand')}</button>
       <button class="btn icon fsbtn" title="Tela cheia">${icon('full')}</button>
-      ${mine ? `<button class="btn stop" title="Parar">${icon('stop')}Parar</button>` : ''}
+      ${mine || kind === 'camera' ? '' : `<button class="btn icon xbtn" title="Parar de assistir">${icon('eye-off')}</button>`}
     </div>`;
+  if (mine) t.querySelector('.label').insertAdjacentHTML('beforeend', '<span class="viewers"></span>');
   t.querySelector('.who').textContent = mine ? 'Você' : name;
   t.querySelector('.ltxt').textContent = label;
   const video = t.querySelector('video');
@@ -841,20 +1190,26 @@ function makeTile({ id, name, label, kind, stream, mine }) {
       vol.style.setProperty('--p', vol.value * 100 + '%');
       muteBtn.innerHTML = icon(video.muted || video.volume === 0 ? 'mute' : 'vol');
     };
-    vol.oninput = () => { video.volume = parseFloat(vol.value); video.muted = false; if (video.volume > 0) lastVol = video.volume; paint(); };
-    muteBtn.onclick = () => {
-      if (video.muted || video.volume === 0) { video.muted = false; video.volume = lastVol || 1; vol.value = video.volume; }
-      else { video.muted = true; vol.value = 0; }
-      paint();
-    };
+    vol.oninput = () => { setVol('stream', name, parseFloat(vol.value)); if (+vol.value > 0) lastVol = +vol.value; };
+    muteBtn.onclick = () => setVol('stream', name, getVol('stream', name) > 0 ? 0 : (lastVol || 1));
+    t._paintVol = paint;
+    video.volume = getVol('stream', name);
+    vol.value = video.volume;
     paint();
   }
   t.querySelector('.fbtn').onclick = () => { state.focusId = state.focusId === id ? null : id; layout(); };
   t.querySelector('.fsbtn').onclick = () => toggleFullscreen(t);
   t.ondblclick = (e) => { if (!e.target.closest('.ctrls')) toggleFullscreen(t); };
-  const stop = t.querySelector('.stop');
-  if (stop) stop.onclick = () => stopShare(id);
-  smooth(() => { $('#grid').appendChild(t); layout(true); video.play().catch(() => {}); });
+  t.oncontextmenu = (e) => { e.preventDefault(); openTileMenu(e, { id, name, mine, tile: t }); };
+  t.querySelector('.sbtn').onclick = () => $('#statsToggle').click();
+  const xb = t.querySelector('.xbtn');
+  if (xb) xb.onclick = () => unwatch(id);
+  smooth(() => {
+    const card = document.querySelector(`.tile.card[data-id="${CSS.escape(id)}"]`);
+    if (card) card.replaceWith(t); else $('#grid').appendChild(t);
+    layout(true);
+    video.play().catch(() => {});
+  });
   return t;
 }
 
@@ -879,11 +1234,10 @@ function layout(noTransition) {
       const target = isF ? focus : grid;
       if (t.parentElement !== target) {
         target.appendChild(t);
-        t.querySelector('video').play().catch(() => {}); // mover o elemento pausa o vídeo
+        t.querySelector('video')?.play().catch(() => {}); // mover o elemento pausa o vídeo
       }
       const fb = t.querySelector('.fbtn');
-      fb.innerHTML = icon(isF ? 'shrink' : 'expand');
-      fb.title = isF ? 'Voltar' : 'Destacar';
+      if (fb) { fb.innerHTML = icon(isF ? 'shrink' : 'expand'); fb.title = isF ? 'Voltar' : 'Destacar'; }
     }
     grid.className = 'grid n' + Math.min(grid.children.length, 9);
     stage.classList.toggle('has-focus', !!state.focusId);
@@ -908,7 +1262,9 @@ function renderPeople() {
       el = document.createElement('div');
       el.className = 'person';
       el.dataset.name = n;
-      el.innerHTML = `${orbHTML(n)}<span class="nm"></span><span class="vic"></span><span class="st"></span><span class="live">AO VIVO</span>`;
+      el.innerHTML = `${orbHTML(n)}<span class="nm"></span><span class="vic"></span><span class="st"></span><span class="live" title="Assistir">AO VIVO</span>`;
+      el.querySelector('.live').onclick = () => watchPerson(n, state.channelId);
+      el.oncontextmenu = (e) => { e.preventDefault(); openPersonMenu(e, n, state.channelId); };
       el.querySelector('.nm').innerHTML = esc(n) + (n === state.myName ? ' <span class="you">· você</span>' : '');
     }
     if (box.children[idx] !== el) box.insertBefore(el, box.children[idx] || null);
@@ -921,7 +1277,7 @@ function renderPeople() {
     }
     el.querySelector('.st').className = 'st ' + st;
     el.title = title;
-    const live = me ? state.shares.size > 0 : [...(state.remoteMeta.get(n)?.values() || [])].some((x) => x.kind !== 'voice');
+    const live = me ? state.shares.size > 0 : [...(state.remoteMeta.get(n)?.values() || [])].some((x) => x.kind === 'screen' || x.kind === 'window');
     el.classList.toggle('is-live', live);
     const vs = me ? (state.voice ? { inVoice: true, muted: state.voice.muted, deaf: state.voice.deaf } : null) : state.vstate.get(n);
     const vic = el.querySelector('.vic');
@@ -1220,7 +1576,7 @@ async function joinVoice() {
   stream.getAudioTracks().forEach((t) => { t.enabled = !state.voice.muted; });
   state.voice.meter = makeMeter(stream, (on) => setSpeaking(state.myName, on && !state.voice?.muted), myThreshold());
   for (const peer of state.peers.values()) addVoiceToPeer(peer);
-  for (const v of state.voices.values()) v.audio.muted = state.voice.deaf;
+  for (const v of state.voices.values()) v.audio.muted = state.voice.deaf || isLocalMuted(v.from);
   announceShares();
   sendVoiceState();
   chime('join');
@@ -1276,15 +1632,15 @@ function toggleDeaf() {
   const v = state.voice;
   if (!v) {
     state.pref.deaf = !state.pref.deaf;
-    state.pref.muted = state.pref.deaf;
+    if (state.pref.deaf) { state.pref.preDeafMuted = state.pref.muted; state.pref.muted = true; } else state.pref.muted = !!state.pref.preDeafMuted;
     chime(state.pref.deaf ? 'mute' : 'unmute');
     savePref(); renderVoice(); return;
   }
   v.deaf = !v.deaf;
-  // ensurdecer também muta o microfone (igual ao Discord)
-  v.muted = v.deaf ? true : false;
+  // ensurdecer também muta o microfone; ao voltar, mantém o mudo de antes (igual ao Discord)
+  if (v.deaf) { v.preDeafMuted = v.muted; v.muted = true; } else v.muted = !!v.preDeafMuted;
   v.stream.getAudioTracks().forEach((t) => { t.enabled = !v.muted; });
-  for (const rv of state.voices.values()) rv.audio.muted = v.deaf;
+  for (const rv of state.voices.values()) rv.audio.muted = v.deaf || isLocalMuted(rv.from);
   if (v.muted) setSpeaking(state.myName, false);
   chime(v.deaf ? 'mute' : 'unmute');
   sendVoiceState();
@@ -1299,6 +1655,7 @@ function attachVoice(from, stream) {
   audio.autoplay = true;
   audio.srcObject = stream;
   audio.muted = !state.voice || state.voice.deaf; // só escuta quem também entrou na voz
+  audio.volume = getVol('voice', from);
   document.body.appendChild(audio);
   if (window.TMAudio && state.cfg.audio?.outputId) TMAudio.setOutputDevice(audio, state.cfg.audio.outputId);
   audio.play().catch(() => {});
@@ -1392,9 +1749,12 @@ $('#homeBtn').onclick = () => {
   if (state.shares.size && !confirm('Sair do TriMeet vai parar sua transmissão. Continuar?')) return;
   logout();
 };
-$('#statsBtn').onclick = () => {
+$('#camBtn').onclick = toggleCamera;
+$('#stopShareBtn').onclick = () => { for (const id of [...state.shares.keys()]) stopShare(id); };
+$('#stopWatchBtn').onclick = unwatchAll;
+$('#statsToggle').onclick = () => {
   const on = document.body.classList.toggle('show-stats');
-  $('#statsBtn').classList.toggle('on', on);
+  $$('.tile .sbtn').forEach((b) => b.classList.toggle('on', on));
   updateStats();
 };
 $('#shareModal').addEventListener('mousedown', (e) => { if (e.target === $('#shareModal')) closeShareModal(); });
