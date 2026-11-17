@@ -18,7 +18,6 @@ const icon = (name, cls = '') => `<svg class="ic ${cls}"><use href="#i-${name}"/
 const orbHTML = (name) => `<span class="orb" style="--c:${colorOf(name)}">${esc(initialOf(name))}</span>`;
 const DEFAULT_ICE = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
 const CONF = window.TRIMEET_CONFIG || { server: '', key: '' };
-const cleanRoom = (r) => String(r || '').toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 32);
 
 const state = {
   cfg: { name: '', room: '', server: '', share: {} },
@@ -37,6 +36,12 @@ const state = {
   voice: null,                // minha voz: { id, stream, muted, deaf, meter }
   voices: new Map(),          // streamId -> { from, stream, audio, meter }
   vstate: new Map(),          // nome -> { inVoice, muted, deaf }
+  pref: { muted: false, deaf: false }, // mic/fone antes de entrar numa sala
+  hub: null, hubOnline: [], hubReconnect: 1000,
+  channels: new Map(),        // id -> { id, name, ts, order, deleted }
+  presence: new Map(),        // nome -> { ch, inVoice, muted, deaf, live }
+  channelId: null,
+  editing: null,              // id da sala sendo criada/renomeada
   focusId: null,
   selectedSource: null,
   srcTab: 'screen',
@@ -142,6 +147,7 @@ function refreshStepper() {
 async function initLogin() {
   const saved = await window.trimeet.loadConfig();
   if (saved) Object.assign(state.cfg, saved);
+  if (state.cfg.voicePref) state.pref = { ...state.pref, ...state.cfg.voicePref };
 
   const nameInput = $('#nameInput');
   nameInput.value = state.cfg.name || '';
@@ -150,26 +156,8 @@ async function initLogin() {
     state.cfg.name = nameInput.value.trim();
     renderLogin(initialOf(state.cfg.name) !== prev);
   };
-  nameInput.onkeydown = (e) => { if (e.key === 'Enter') { if (!$('#enterBtn').disabled) enter(); else $('#roomInput').focus(); } };
+  nameInput.onkeydown = (e) => { if (e.key === 'Enter' && !$('#enterBtn').disabled) enter(); };
   nameInput.onfocus = nameInput.onblur = () => renderLogin();
-  const roomInput = $('#roomInput');
-  roomInput.value = state.cfg.room || '';
-  roomInput.oninput = () => {
-    const v = cleanRoom(roomInput.value);
-    if (v !== roomInput.value) { const p = roomInput.selectionStart; roomInput.value = v; roomInput.setSelectionRange(p, p); }
-    state.cfg.room = v;
-    renderLogin();
-  };
-  roomInput.onkeydown = (e) => { if (e.key === 'Enter' && !$('#enterBtn').disabled) enter(); };
-  $('#diceBtn').onclick = () => {
-    const words = ['orbe', 'tela', 'pixel', 'aurora', 'nebula', 'cometa', 'neon', 'prisma', 'onda', 'luz'];
-    roomInput.value = `${words[Math.floor(Math.random() * words.length)]}-${Math.floor(1000 + Math.random() * 9000)}`;
-    roomInput.dispatchEvent(new Event('input'));
-    roomInput.focus();
-  };
-  $('#serverInput').value = state.cfg.server || '';
-  $('#serverInput').placeholder = CONF.server || 'https://…workers.dev';
-  $('#serverInput').oninput = (e) => { state.cfg.server = e.target.value.trim(); };
   $('#enterBtn').onclick = enter;
 
   renderLogin();
@@ -183,36 +171,297 @@ function renderLogin(pop) {
   orb.style.setProperty('--c', c.name ? colorOf(c.name) : '#8a8f98');
   $('#meInitial').innerHTML = c.name ? esc(initialOf(c.name)) : icon('user');
   if (pop) { orb.classList.remove('pop'); orb.offsetWidth; orb.classList.add('pop'); }
-  const okRoom = cleanRoom(c.room).length >= 3;
-  $('#enterBtn').disabled = !c.name || !okRoom;
-  $('#enterTxt').textContent = !c.name ? 'Digite seu nome' : !okRoom ? 'Digite o código da sala' : 'Entrar';
+  $('#enterBtn').disabled = !c.name;
+  $('#enterTxt').textContent = !c.name ? 'Digite seu nome' : 'Entrar';
   $('.name-field').classList.toggle('need', !c.name && document.activeElement !== $('#nameInput'));
 }
+
+const serverBase = () => (state.cfg.server || CONF.server || '').replace(/\/+$/, '');
+const wsFor = (room) => `${serverBase().replace(/^http/, 'ws')}/ws?room=${encodeURIComponent(room)}&key=${encodeURIComponent(CONF.key)}`;
 
 async function enter() {
   const c = state.cfg;
   $('#loginErr').textContent = '';
   $('#enterBtn').disabled = true;
-  c.room = cleanRoom(c.room);
-  const base = (c.server || CONF.server || '').replace(/\/+$/, '');
-  if (!base) { $('#loginErr').textContent = 'Servidor não configurado'; renderLogin(); return; }
+  if (!serverBase()) { $('#loginErr').textContent = 'Servidor não configurado'; renderLogin(); return; }
   await window.trimeet.saveConfig(c);
   // credenciais do retransmissor (TURN) — se falhar, segue só com conexão direta
   try {
-    const r = await fetch(`${base}/turn?key=${encodeURIComponent(CONF.key)}`, { cache: 'no-store' });
+    const r = await fetch(`${serverBase()}/turn?key=${encodeURIComponent(CONF.key)}`, { cache: 'no-store' });
     if (r.ok) { const d = await r.json(); if (Array.isArray(d.iceServers) && d.iceServers.length) state.iceServers = d.iceServers; }
   } catch {}
   state.myName = c.name;
-  state.leaving = false;
-  state.wsUrl = `${base.replace(/^http/, 'ws')}/ws?room=${encodeURIComponent(c.room)}&key=${encodeURIComponent(CONF.key)}`;
-  $('#roomName').textContent = c.room;
+  state.loggedOut = false;
+  loadChannels();
   smooth(() => {
     $('#login').classList.add('hidden');
     $('#room').classList.remove('hidden');
+    renderMe();
+    renderChannels();
     renderPeople();
+    renderChanTitle();
     layout(true);
   });
+  connectHub();
+}
+
+// ===================================================================
+// Saguão: lista de salas e quem está em cada uma (estilo Discord)
+// Usa uma sala invisível no mesmo servidor só para trocar essas infos.
+// ===================================================================
+const DEFAULT_CHANNELS = [
+  { id: 'geral', name: 'Geral', ts: 1, order: 1 },
+  { id: 'jogos', name: 'Jogos', ts: 1, order: 2 },
+  { id: 'filmes', name: 'Filmes', ts: 1, order: 3 },
+];
+function loadChannels() {
+  state.channels = new Map();
+  for (const c of DEFAULT_CHANNELS) state.channels.set(c.id, { ...c });
+  for (const c of state.cfg.channels || []) mergeChannel(c);
+}
+function saveChannels() {
+  state.cfg.channels = [...state.channels.values()];
+  window.trimeet.saveConfig(state.cfg);
+}
+function mergeChannel(c) {
+  if (!c || !c.id) return false;
+  const cur = state.channels.get(c.id);
+  if (cur && (cur.ts > c.ts || (cur.ts === c.ts && JSON.stringify(cur) >= JSON.stringify(c)))) return false;
+  state.channels.set(c.id, { id: String(c.id).slice(0, 40), name: String(c.name || 'Sala').slice(0, 28), ts: +c.ts || 0, order: +c.order || 0, deleted: !!c.deleted });
+  return true;
+}
+function myPresence() {
+  const v = state.voice;
+  return {
+    ch: state.channelId,
+    inVoice: !!v,
+    muted: v ? v.muted : state.pref.muted,
+    deaf: v ? v.deaf : state.pref.deaf,
+    live: state.shares.size > 0,
+  };
+}
+function hubSend(m) { if (state.hub && state.hub.readyState === 1) state.hub.send(JSON.stringify(m)); }
+function publishPresence(to) {
+  const m = { type: 'presence', ...myPresence() };
+  hubSend(to ? { ...m, to } : m);
+  renderChannels();
+  renderMe();
+}
+function publishChannels(to) {
+  const m = { type: 'channels', list: [...state.channels.values()] };
+  hubSend(to ? { ...m, to } : m);
+}
+
+function connectHub() {
+  let ws;
+  try { ws = new WebSocket(wsFor('trimeet-saguao')); } catch { return; }
+  state.hub = ws;
+  ws.onopen = () => { state.hubReconnect = 1000; ws.send(JSON.stringify({ type: 'join', name: state.myName })); };
+  ws.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type === 'welcome') { publishPresence(); publishChannels(); if (!state.channelId) setConn('conectado', 'ok'); }
+    else if (m.type === 'peers') {
+      const list = m.peers.filter((n) => n !== state.myName);
+      const added = list.filter((n) => !state.hubOnline.includes(n));
+      state.hubOnline = list;
+      for (const n of [...state.presence.keys()]) if (!list.includes(n)) state.presence.delete(n);
+      for (const n of added) { publishPresence(n); publishChannels(n); }
+      renderChannels();
+    } else if (m.type === 'presence' && m.from) {
+      state.presence.set(m.from, { ch: m.ch || null, inVoice: !!m.inVoice, muted: !!m.muted, deaf: !!m.deaf, live: !!m.live });
+      renderChannels();
+    } else if (m.type === 'channels') {
+      let changed = false;
+      for (const c of m.list || []) changed = mergeChannel(c) || changed;
+      if (changed) {
+        saveChannels();
+        if (state.channelId && state.channels.get(state.channelId)?.deleted) leaveChannel();
+        renderChannels();
+        renderChanTitle();
+      }
+    }
+  };
+  ws.onclose = (ev) => {
+    if (state.hub !== ws) return;
+    state.hub = null;
+    if (state.loggedOut) return;
+    if (ev.code === 4000) { toast('Você entrou com este nome em outro PC'); return; }
+    if (!state.channelId) setConn('reconectando…', 'bad');
+    setTimeout(() => { if (!state.loggedOut) connectHub(); }, state.hubReconnect);
+    state.hubReconnect = Math.min(state.hubReconnect * 1.6, 8000);
+  };
+}
+
+function membersOf(chId) {
+  const out = [];
+  if (state.channelId === chId) out.push({ name: state.myName, me: true, ...myPresence() });
+  for (const [n, p] of state.presence) if (p.ch === chId && state.hubOnline.includes(n)) out.push({ name: n, ...p });
+  return out;
+}
+
+function renderChannels() {
+  const box = $('#channels');
+  if (!box) return;
+  const list = [...state.channels.values()].filter((c) => !c.deleted).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  // linha de edição que já terminou: volta a ser uma sala normal
+  for (const el of $$('.ch', box)) if (el.querySelector('.ch-edit') && state.editing !== el.dataset.id) el.remove();
+  const keep = new Set();
+  list.forEach((c, idx) => {
+    keep.add(c.id);
+    let el = box.querySelector(`.ch[data-id="${CSS.escape(c.id)}"]`);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'ch';
+      el.dataset.id = c.id;
+      el.innerHTML = `<button class="ch-row">${icon('speaker')}<span class="nm"></span><span class="count"></span><span class="acts"><span class="ren" title="Renomear">${icon('pencil')}</span><span class="del" title="Apagar">${icon('trash')}</span></span></button><div class="ch-members"></div>`;
+      el.querySelector('.ch-row').onclick = (e) => {
+        if (e.target.closest('.ren')) { e.stopPropagation(); startEdit(c.id); return; }
+        if (e.target.closest('.del')) { e.stopPropagation(); deleteChannel(c.id); return; }
+        joinChannel(c.id);
+      };
+      el.querySelector('.ch-row').ondblclick = (e) => { e.preventDefault(); startEdit(c.id); };
+    }
+    if (box.children[idx] !== el) box.insertBefore(el, box.children[idx] || null);
+    if (state.editing === c.id && !el.querySelector('.ch-edit')) el.querySelector('.ch-row').replaceWith(editRow(c.id, c.name));
+    const nm = el.querySelector('.ch-row .nm');
+    if (nm && nm.textContent !== c.name) nm.textContent = c.name;
+    const mem = membersOf(c.id);
+    const cnt = el.querySelector('.count');
+    if (cnt) cnt.textContent = mem.length ? String(mem.length) : '';
+    el.classList.toggle('active', state.channelId === c.id);
+    el.classList.toggle('has-live', mem.some((m) => m.live));
+    // membros
+    const mbox = el.querySelector('.ch-members');
+    const names = mem.map((m) => m.name);
+    for (const r of $$('.member', mbox)) if (!names.includes(r.dataset.name)) r.remove();
+    mem.forEach((m, i) => {
+      let r = mbox.querySelector(`.member[data-name="${CSS.escape(m.name)}"]`);
+      if (!r) {
+        r = document.createElement('div');
+        r.className = 'member' + (m.me ? ' me' : '');
+        r.dataset.name = m.name;
+        r.innerHTML = `${orbHTML(m.name)}<span class="nm"></span><span class="mi"></span>`;
+        r.querySelector('.nm').textContent = m.name;
+      }
+      if (mbox.children[i] !== r) mbox.insertBefore(r, mbox.children[i] || null);
+      const k = (m.live ? 'L' : '') + (m.deaf ? 'D' : m.muted ? 'M' : '');
+      const mi = r.querySelector('.mi');
+      if (mi.dataset.k !== k) {
+        mi.dataset.k = k;
+        mi.innerHTML = (m.deaf ? icon('deaf') : m.muted ? icon('mic-off') : '') + (m.live ? '<span class="lv">AO VIVO</span>' : '');
+      }
+    });
+  });
+  // sala nova sendo criada
+  if (state.editing === '__new__') {
+    keep.add('__new__');
+    if (!box.querySelector('.ch[data-id="__new__"]')) {
+      const el = document.createElement('div');
+      el.className = 'ch';
+      el.dataset.id = '__new__';
+      el.appendChild(editRow('__new__', ''));
+      box.appendChild(el);
+    }
+  }
+  for (const el of $$('.ch', box)) if (!keep.has(el.dataset.id)) el.remove();
+}
+
+function editRow(id, value) {
+  const row = document.createElement('label');
+  row.className = 'ch-edit';
+  row.innerHTML = `${icon('speaker')}<input type="text" maxlength="28" spellcheck="false" placeholder="Nome da sala" />`;
+  const inp = row.querySelector('input');
+  inp.value = value;
+  let done = false;
+  const finish = (ok) => {
+    if (done) return; done = true;
+    const name = inp.value.trim();
+    state.editing = null;
+    if (ok && name) {
+      if (id === '__new__') {
+        const nid = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+        const order = Math.max(0, ...[...state.channels.values()].map((c) => c.order)) + 1;
+        mergeChannel({ id: nid, name, ts: Date.now(), order });
+      } else {
+        const c = state.channels.get(id);
+        if (c && c.name !== name) mergeChannel({ ...c, name, ts: Date.now() });
+      }
+      saveChannels();
+      publishChannels();
+      renderChanTitle();
+    }
+    renderChannels();
+  };
+  inp.onkeydown = (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); };
+  inp.onblur = () => finish(true);
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
+  return row;
+}
+function startEdit(id) { state.editing = id; renderChannels(); }
+function deleteChannel(id) {
+  const c = state.channels.get(id);
+  if (!c) return;
+  if (!confirm(`Apagar a sala "${c.name}"? Ela some para todos.`)) return;
+  mergeChannel({ ...c, deleted: true, ts: Date.now() });
+  saveChannels();
+  publishChannels();
+  if (state.channelId === id) leaveChannel();
+  renderChannels();
+}
+
+function renderMe() {
+  const box = $('#meOrbSmall');
+  if (!box || !state.myName) return;
+  if (box.dataset.n !== state.myName) { box.dataset.n = state.myName; box.innerHTML = orbHTML(state.myName); }
+  $('#meName').textContent = state.myName;
+  const ch = state.channelId && state.channels.get(state.channelId);
+  const st = $('#meStatus');
+  st.textContent = ch ? `Na sala ${ch.name}` : 'Online';
+  st.classList.toggle('in', !!ch);
+  renderVoice();
+}
+
+function renderChanTitle() {
+  const ch = state.channelId && state.channels.get(state.channelId);
+  $('#chanName').textContent = ch ? ch.name : 'TriMeet';
+  $('#room').classList.toggle('in-channel', !!ch);
+  $('#emptyTxt').textContent = ch ? 'Ninguém ao vivo' : 'Escolha uma sala';
+}
+
+async function joinChannel(id) {
+  if (state.channelId === id) return;
+  if (state.shares.size && !confirm('Trocar de sala vai parar sua transmissão. Continuar?')) return;
+  if (state.channelId) leaveChannel(true);
+  state.channelId = id;
+  state.leaving = false;
+  state.wsUrl = wsFor('sala-' + id);
+  renderChanTitle();
+  renderMe();
+  publishPresence();
   connectSignal();
+  layout();
+  await joinVoice();
+  publishPresence();
+}
+
+function leaveChannel(switching) {
+  if (!state.channelId) return;
+  state.leaving = true;
+  leaveVoice(true);
+  for (const id of [...state.shares.keys()]) stopShare(id);
+  for (const n of [...state.peers.keys()]) closePeer(n);
+  for (const [id] of state.pending) state.pending.delete(id);
+  state.online = [];
+  if (state.ws) { try { state.ws.close(); } catch {} state.ws = null; }
+  state.channelId = null;
+  state.focusId = null;
+  if (!switching) chime('leave');
+  renderPeople();
+  renderChanTitle();
+  renderMe();
+  publishPresence();
+  layout();
+  setConn('conectado', state.hub ? 'ok' : 'bad');
 }
 
 // ===================================================================
@@ -418,6 +667,7 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
   for (const peer of state.peers.values()) addShareToPeer(peer, id, share);
   announceShares();
   renderPeople();
+  publishPresence();
 }
 
 function stopShare(id) {
@@ -434,6 +684,7 @@ function stopShare(id) {
   removeTile(share.tile);
   announceShares();
   renderPeople();
+  publishPresence();
 }
 
 function addShareToPeer(peer, id, share) {
@@ -856,13 +1107,12 @@ function toast(msg) {
   toastTimer = setTimeout(() => hideEl(t, 200), 2600);
 }
 
-function leave() {
-  state.leaving = true;
-  leaveVoice(true);
-  for (const id of [...state.shares.keys()]) stopShare(id);
-  for (const n of [...state.peers.keys()]) closePeer(n);
-  state.online = [];
-  if (state.ws) { try { state.ws.close(); } catch {} state.ws = null; }
+function logout() {
+  leaveChannel(true);
+  state.loggedOut = true;
+  if (state.hub) { try { state.hub.close(); } catch {} state.hub = null; }
+  state.hubOnline = [];
+  state.presence.clear();
   smooth(() => {
     $('#room').classList.add('hidden');
     $('#login').classList.remove('hidden');
@@ -883,7 +1133,7 @@ function actx() {
 }
 
 // medidor de volume: acende o anel verde de quem está falando
-function makeMeter(stream, onChange) {
+function makeMeter(stream, onChange, threshold = 0.035) {
   try {
     const ctx = actx();
     const src = ctx.createMediaStreamSource(stream);
@@ -898,7 +1148,7 @@ function makeMeter(stream, onChange) {
       for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / data.length);
       const now = performance.now();
-      if (rms > 0.035) lastLoud = now;
+      if (rms > threshold) lastLoud = now;
       const sp = now - lastLoud < 280;
       if (sp !== speaking) { speaking = sp; onChange(sp); }
     }, 60);
@@ -907,8 +1157,10 @@ function makeMeter(stream, onChange) {
 }
 
 function setSpeaking(name, on) {
-  const el = document.querySelector(`.person[data-name="${CSS.escape(name)}"]`);
-  if (el) el.classList.toggle('speaking', on);
+  if (!name) return;
+  const sel = CSS.escape(name);
+  document.querySelectorAll(`.person[data-name="${sel}"], .member[data-name="${sel}"]`).forEach((el) => el.classList.toggle('speaking', on));
+  if (name === state.myName) $('.me-panel')?.classList.toggle('speaking', on);
 }
 
 // sons curtos de entrar/sair/mutar
@@ -958,20 +1210,17 @@ async function joinVoice() {
   if (state.voice) return;
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-      video: false,
-    });
+    stream = await getMic();
   } catch (e) {
     toast('Microfone bloqueado — libere em Configurações do Windows › Privacidade › Microfone');
     return;
   }
-  const track = stream.getAudioTracks()[0];
-  if (track) track.contentHint = 'speech';
-  state.voice = { id: stream.id, stream, muted: false, deaf: false, meter: null };
-  state.voice.meter = makeMeter(stream, (on) => setSpeaking(state.myName, on && !state.voice?.muted));
+  if (!state.channelId) { releaseMic(stream); return; }
+  state.voice = { id: stream.id, stream, muted: !!(state.pref.muted || state.pref.deaf), deaf: !!state.pref.deaf, meter: null };
+  stream.getAudioTracks().forEach((t) => { t.enabled = !state.voice.muted; });
+  state.voice.meter = makeMeter(stream, (on) => setSpeaking(state.myName, on && !state.voice?.muted), myThreshold());
   for (const peer of state.peers.values()) addVoiceToPeer(peer);
-  for (const v of state.voices.values()) v.audio.muted = false;
+  for (const v of state.voices.values()) v.audio.muted = state.voice.deaf;
   announceShares();
   sendVoiceState();
   chime('join');
@@ -985,7 +1234,7 @@ function leaveVoice(silent) {
   if (!v) return;
   state.voice = null;
   v.meter?.stop();
-  v.stream.getTracks().forEach((t) => t.stop());
+  releaseMic(v.stream);
   for (const peer of state.peers.values()) {
     for (const s of peer.senders.get(v.id) || []) { try { peer.pc.removeTrack(s); } catch {} }
     peer.senders.delete(v.id);
@@ -997,22 +1246,40 @@ function leaveVoice(silent) {
   renderPeople();
 }
 
+function savePref() {
+  const v = state.voice;
+  if (v) state.pref = { muted: v.muted, deaf: v.deaf };
+  state.cfg.voicePref = state.pref;
+  window.trimeet.saveConfig(state.cfg);
+  publishPresence();
+}
 function toggleMute() {
   const v = state.voice;
-  if (!v) return joinVoice();
+  if (!v) {
+    if (state.pref.deaf) state.pref = { muted: false, deaf: false };
+    else state.pref.muted = !state.pref.muted;
+    chime(state.pref.muted ? 'mute' : 'unmute');
+    savePref(); renderVoice(); return;
+  }
   if (v.deaf) { toggleDeaf(); return; }
   v.muted = !v.muted;
   v.stream.getAudioTracks().forEach((t) => { t.enabled = !v.muted; });
   if (v.muted) setSpeaking(state.myName, false);
   chime(v.muted ? 'mute' : 'unmute');
   sendVoiceState();
+  savePref();
   renderVoice();
   renderPeople();
 }
 
 function toggleDeaf() {
   const v = state.voice;
-  if (!v) return;
+  if (!v) {
+    state.pref.deaf = !state.pref.deaf;
+    state.pref.muted = state.pref.deaf;
+    chime(state.pref.deaf ? 'mute' : 'unmute');
+    savePref(); renderVoice(); return;
+  }
   v.deaf = !v.deaf;
   // ensurdecer também muta o microfone (igual ao Discord)
   v.muted = v.deaf ? true : false;
@@ -1021,6 +1288,7 @@ function toggleDeaf() {
   if (v.muted) setSpeaking(state.myName, false);
   chime(v.deaf ? 'mute' : 'unmute');
   sendVoiceState();
+  savePref();
   renderVoice();
   renderPeople();
 }
@@ -1032,6 +1300,7 @@ function attachVoice(from, stream) {
   audio.srcObject = stream;
   audio.muted = !state.voice || state.voice.deaf; // só escuta quem também entrou na voz
   document.body.appendChild(audio);
+  if (window.TMAudio && state.cfg.audio?.outputId) TMAudio.setOutputDevice(audio, state.cfg.audio.outputId);
   audio.play().catch(() => {});
   const meter = makeMeter(stream, (on) => setSpeaking(from, on));
   state.voices.set(stream.id, { from, stream, audio, meter });
@@ -1052,23 +1321,57 @@ function removeVoice(id) {
 
 function renderVoice() {
   const v = state.voice;
-  const vb = $('#voiceBtn');
-  vb.classList.toggle('in', !!v);
-  vb.innerHTML = icon(v ? 'phone-off' : 'headset');
-  vb.title = v ? 'Sair da voz' : 'Entrar na voz';
-  $('#micBtn').classList.toggle('hidden', !v);
-  $('#deafBtn').classList.toggle('hidden', !v);
-  if (v) {
-    $('#micBtn').innerHTML = icon(v.muted ? 'mic-off' : 'mic');
-    $('#micBtn').classList.toggle('off', v.muted);
-    $('#micBtn').title = v.muted ? 'Desmutar (M)' : 'Mutar (M)';
-    $('#deafBtn').innerHTML = icon(v.deaf ? 'deaf' : 'headset');
-    $('#deafBtn').classList.toggle('off', v.deaf);
-    $('#deafBtn').title = v.deaf ? 'Ativar som' : 'Desativar som (ensurdecer)';
-  }
+  const muted = v ? v.muted : state.pref.muted || state.pref.deaf;
+  const deaf = v ? v.deaf : state.pref.deaf;
+  const mic = $('#micBtn'), dfb = $('#deafBtn');
+  if (!mic) return;
+  mic.innerHTML = icon(muted ? 'mic-off' : 'mic');
+  mic.classList.toggle('off', muted);
+  mic.title = muted ? 'Desmutar (M)' : 'Mutar (M)';
+  dfb.innerHTML = icon(deaf ? 'deaf' : 'headset');
+  dfb.classList.toggle('off', deaf);
+  dfb.title = deaf ? 'Ativar som' : 'Desativar som';
 }
 
-$('#voiceBtn').onclick = () => (state.voice ? leaveVoice() : joinVoice());
+function myThreshold() {
+  const sens = state.cfg.audio?.sensitivity;
+  return window.TMSettings && sens != null ? TMSettings.thresholdFor(sens) : 0.035;
+}
+
+// microfone: usa o módulo de áudio (modos de voz) quando disponível
+async function getMic() {
+  const a = state.cfg.audio || {};
+  if (window.TMAudio) return TMAudio.getMicStream({ mode: a.mode || 'natural', deviceId: a.inputId || undefined });
+  const s = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, channelCount: 1, deviceId: a.inputId ? { exact: a.inputId } : undefined },
+    video: false,
+  });
+  s.getAudioTracks().forEach((t) => { t.contentHint = 'speech'; });
+  return s;
+}
+function releaseMic(stream) {
+  if (!stream) return;
+  if (window.TMAudio && TMAudio.release) { try { TMAudio.release(stream); return; } catch {} }
+  stream.getTracks().forEach((t) => t.stop());
+}
+// configurações de áudio mudaram: troca o microfone sem sair da sala
+window.addEventListener('tm-audio-change', async (e) => {
+  state.cfg.audio = { ...(state.cfg.audio || {}), ...(e.detail || {}) };
+  if (window.TMAudio) for (const rv of state.voices.values()) TMAudio.setOutputDevice(rv.audio, state.cfg.audio.outputId);
+  const v = state.voice;
+  if (!v) return;
+  let ns;
+  try { ns = await getMic(); } catch { toast('Não consegui trocar o microfone'); return; }
+  const nt = ns.getAudioTracks()[0];
+  nt.enabled = !v.muted;
+  for (const peer of state.peers.values()) for (const snd of peer.senders.get(v.id) || []) { try { await snd.replaceTrack(nt); } catch {} }
+  v.meter?.stop();
+  const old = v.stream;
+  v.stream = ns;
+  v.meter = makeMeter(ns, (on) => setSpeaking(state.myName, on && !state.voice?.muted), myThreshold());
+  releaseMic(old);
+});
+
 $('#micBtn').onclick = toggleMute;
 $('#deafBtn').onclick = toggleDeaf;
 document.addEventListener('keydown', (e) => {
@@ -1077,19 +1380,17 @@ document.addEventListener('keydown', (e) => {
   if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); toggleMute(); }
 });
 
-$('#roomChip').onclick = () => {
-  navigator.clipboard.writeText(state.cfg.room);
-  toast('Código copiado');
-};
+$('#addRoomBtn').onclick = () => startEdit('__new__');
+$('#settingsBtn').onclick = () => { if (window.TMSettings) TMSettings.open(); else toast('Configurações chegam na próxima versão'); };
 setInterval(() => send({ type: 'ping' }), 25000);
 $('#shareBtn').onclick = openShareModal;
 $('#closeModal').onclick = closeShareModal;
 $('#cancelShare').onclick = closeShareModal;
 $('#goShare').onclick = goShare;
-$('#leaveBtn').onclick = leave;
+$('#leaveBtn').onclick = () => leaveChannel();
 $('#homeBtn').onclick = () => {
-  if (state.shares.size && !confirm('Voltar ao início vai parar sua transmissão. Continuar?')) return;
-  leave();
+  if (state.shares.size && !confirm('Sair do TriMeet vai parar sua transmissão. Continuar?')) return;
+  logout();
 };
 $('#statsBtn').onclick = () => {
   const on = document.body.classList.toggle('show-stats');

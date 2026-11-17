@@ -44,6 +44,7 @@
   }
 
   function draw(now) {
+    if (!cols || !rows || !cv.width || !cv.height) return;
     const t = (now - t0) / 1000;
     sg.globalCompositeOperation = 'source-over';
     sg.fillStyle = '#000';

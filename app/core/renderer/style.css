@@ -446,3 +446,84 @@ body.idle #stage { cursor: none; }
 .person .vic .ic { width: 14px; height: 14px; }
 .person .vic.on { color: var(--ok); }
 .person .vic.mute, .person .vic.deaf { color: var(--live); }
+
+/* ==========================================================================
+   SERVIDOR (barra lateral estilo Discord)
+   ========================================================================== */
+#room { display: block; }
+.sidebar { position: absolute; z-index: 25; top: 14px; left: 14px; bottom: 14px; width: 264px; border-radius: 26px;
+  display: flex; flex-direction: column; padding: 10px; --glass-tint: rgba(18, 18, 20, .62); }
+.main { position: absolute; top: 0; bottom: 0; left: 278px; right: 0; }
+.side-head { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 12px; border-radius: 16px;
+  font-weight: 650; font-size: 16px; letter-spacing: -.02em; color: var(--text); text-align: left;
+  transition: background 200ms ease, transform 100ms ease-out; }
+.side-head:hover { background: rgba(255, 255, 255, .06); }
+.side-head:active { transform: scale(.98); }
+.side-head .mark { width: 26px; height: 26px; }
+.side-head:hover .mark { transform: rotate(-12deg) scale(1.08); }
+.side-label { display: flex; align-items: center; justify-content: space-between; padding: 14px 6px 6px 14px;
+  font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
+.btn.sm { height: 32px; width: 32px; }
+.btn.sm .ic { width: 17px; height: 17px; }
+.channels { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 0 2px 8px;
+  mask-image: linear-gradient(#000 calc(100% - 16px), transparent); }
+.channels::-webkit-scrollbar { width: 0; }
+
+.ch { border-radius: 14px; animation: rise 460ms var(--spring) both; }
+.ch-row { position: relative; width: 100%; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 8px 0 12px;
+  border-radius: 12px; color: var(--text-2); font-weight: 550; font-size: 14px; text-align: left;
+  transition: background 180ms ease, color 180ms ease, transform 100ms ease-out; }
+.ch-row:hover { background: rgba(255, 255, 255, .06); color: var(--text); }
+.ch-row:active { transform: scale(.98); }
+.ch-row .ic { width: 18px; height: 18px; flex: none; color: var(--text-3); transition: color 180ms; }
+.ch-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-row .count { font-size: 11px; color: var(--text-3); font-family: "TM Mono", monospace; }
+.ch-row .acts { display: none; gap: 0; }
+.ch-row:hover .acts { display: inline-flex; }
+.ch-row:hover .count { display: none; }
+.ch-row .acts span { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; color: var(--text-3); }
+.ch-row .acts span:hover { background: rgba(255, 255, 255, .1); color: var(--text); }
+.ch-row .acts span.del:hover { color: var(--live); }
+.ch-row .acts .ic { width: 15px; height: 15px; }
+.ch.active .ch-row { background: rgba(255, 255, 255, .1); color: var(--text); }
+.ch.active .ch-row .ic { color: var(--ok); }
+.ch.has-live .ch-row::after { content: ""; position: absolute; left: 4px; top: 50%; width: 3px; height: 14px; margin-top: -7px; border-radius: 2px; background: var(--live); }
+.ch-edit { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 12px; border-radius: 12px; background: rgba(0, 0, 0, .35);
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 4px rgba(70, 200, 220, .14); animation: rise 360ms var(--spring) both; }
+.ch-edit .ic { width: 18px; height: 18px; color: var(--accent); flex: none; }
+.ch-edit input { font: inherit; font-weight: 550; font-size: 14px; }
+
+.ch-members { display: flex; flex-direction: column; gap: 1px; padding: 2px 0 6px 30px; }
+.member { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 10px; font-size: 13px; color: var(--text-2);
+  animation: rise 420ms var(--spring) both; }
+.member .orb { width: 22px; height: 22px; font-size: 10px; transition: box-shadow 180ms ease; }
+.member .orb::after { display: none; }
+.member .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member.me .nm { color: var(--text); }
+.member .mi { display: inline-flex; gap: 3px; color: var(--live); }
+.member .mi .ic { width: 14px; height: 14px; }
+.member .lv { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; color: #fff; background: var(--live); padding: 2px 6px; border-radius: 6px; }
+.member.speaking .orb { box-shadow: 0 0 0 2px var(--ok), 0 0 12px rgba(50, 215, 75, .5); }
+
+.side-online { padding: 6px 6px 2px 14px; font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
+
+.me-panel { display: flex; align-items: center; gap: 4px; padding: 8px 6px 4px 8px; margin-top: 6px; border-top: 1px solid var(--hair); }
+.me-orb .orb { width: 34px; height: 34px; font-size: 14px; transition: box-shadow 180ms ease; }
+.me-panel.speaking .me-orb .orb { box-shadow: 0 0 0 2px var(--ok), 0 0 14px rgba(50, 215, 75, .55); }
+.me-info { flex: 1; min-width: 0; display: flex; flex-direction: column; padding-left: 6px; line-height: 1.25; }
+.me-info b { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-info span { font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-info span.in { color: var(--ok); }
+.me-panel .btn { background: transparent; color: var(--text-2); }
+.me-panel .btn:hover { background: rgba(255, 255, 255, .08); color: var(--text); }
+.me-panel .btn.off { background: rgba(255, 69, 58, .16); color: var(--live); }
+
+.chan-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; letter-spacing: -.01em; padding-left: 4px; white-space: nowrap; }
+.chan-title .ic { width: 18px; height: 18px; color: var(--text-3); }
+#room.in-channel .chan-title .ic { color: var(--ok); }
+#room:not(.in-channel) .dock, #room:not(.in-channel) #chanSep { display: none; }
+body.idle .sidebar { opacity: .0; transform: translateX(-20px); pointer-events: none; }
+.sidebar { transition: opacity 400ms ease, transform 500ms var(--sheet); }
+body.idle .main { left: 0; }
+.main { transition: left 500ms var(--sheet); }
+#room:not(.in-channel) #people { display: none; }

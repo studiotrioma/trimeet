@@ -25,7 +25,8 @@ function createWindow() {
     height: 860,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#000000',
+    show: false,
     title: 'TriMeet',
     icon: path.join(app.getAppPath(), 'build', 'icon.png'),
     autoHideMenuBar: true,
@@ -39,6 +40,7 @@ function createWindow() {
   if (process.env.TRIMEET_AUTOTEST) {
     win.webContents.on('console-message', (_e, level, message) => console.log(`[${process.env.TRIMEET_AUTOTEST}] ${message}`));
   }
+  win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
@@ -116,8 +118,8 @@ app.whenReady().then(() => {
     return out.sort((a, b) => b.tailscale - a.tailscale);
   });
 
-  createWindow();
   setupUpdater();
+  startupUpdate().then((relaunching) => { if (!relaunching) createWindow(); });
 });
 
 // ===================================================================
@@ -149,37 +151,121 @@ function serverBase() {
   return m ? m[1].replace(/\/+$/, '') : '';
 }
 
+async function fetchLatest(base, timeoutMs) {
+  const ctrl = new AbortController();
+  const t = timeoutMs ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  try {
+    const r = await net.fetch(`${base}/update/latest.json?t=${Date.now()}`, { cache: 'no-store', signal: ctrl.signal });
+    if (!r.ok) return null;
+    return await r.json();
+  } finally { if (t) clearTimeout(t); }
+}
+
+// baixa e descompacta o núcleo novo; onProgress(0..100)
+async function downloadCore(base, info, onProgress) {
+  const res = await net.fetch(new URL(info.bundle, base + '/').toString(), { cache: 'no-store' });
+  if (!res.ok) throw new Error('download ' + res.status);
+  const total = parseInt(res.headers.get('content-length') || '0', 10);
+  const chunks = [];
+  let got = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(Buffer.from(value));
+    got += value.length;
+    if (onProgress && total) onProgress(Math.min(99, Math.round((got / total) * 100)));
+  }
+  const buf = Buffer.concat(chunks);
+  const hash = crypto.createHash('sha256').update(buf).digest('hex');
+  if (info.sha256 && hash !== info.sha256) throw new Error('arquivo corrompido');
+  const pack = JSON.parse(zlib.gunzipSync(buf).toString('utf8'));
+  const dest = path.join(UPD_DIR(), String(info.version));
+  fs.rmSync(dest, { recursive: true, force: true });
+  for (const [rel, b64] of Object.entries(pack.files || {})) {
+    const safe = path.normalize(rel).replace(/^(\.\.(\/|\\|$))+/, '');
+    const out = path.join(dest, safe);
+    if (!out.startsWith(dest)) continue;
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, Buffer.from(b64, 'base64'));
+  }
+  if (!fs.existsSync(path.join(dest, 'main.js'))) throw new Error('pacote incompleto');
+  if (onProgress) onProgress(100);
+}
+
+function activate(version) {
+  fs.mkdirSync(UPD_DIR(), { recursive: true });
+  fs.writeFileSync(path.join(UPD_DIR(), 'current.json'), JSON.stringify({ version }));
+  try { fs.unlinkSync(path.join(UPD_DIR(), 'pending.json')); } catch {}
+}
+
+// Ao abrir: tela de abertura que já atualiza (estilo Discord)
+async function startupUpdate() {
+  if (process.env.TRIMEET_AUTOTEST && !process.env.TRIMEET_TEST_SPLASH) return false;
+  const splash = new BrowserWindow({
+    width: 300, height: 340, frame: false, resizable: false, movable: true, show: false,
+    backgroundColor: '#000000', alwaysOnTop: false, skipTaskbar: false, title: 'TriMeet',
+    icon: path.join(app.getAppPath(), 'build', 'icon.png'),
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  splash.loadFile(path.join(__dirname, 'renderer', 'splash.html'));
+  splash.once('ready-to-show', () => splash.show());
+  const say = (text, pct) => {
+    if (splash.isDestroyed()) return;
+    splash.webContents.executeJavaScript(`window.setStatus && setStatus(${JSON.stringify(text)}, ${pct == null ? 'null' : pct})`).catch(() => {});
+  };
+  const started = Date.now();
+  const minShow = () => new Promise((r) => setTimeout(r, Math.max(0, 900 - (Date.now() - started))));
+  try {
+    // atualização já baixada antes? aplica direto
+    const pend = readPending();
+    if (pend && newer(pend.version, CORE_VERSION) && fs.existsSync(path.join(UPD_DIR(), String(pend.version), 'main.js'))) {
+      say(`Instalando ${pend.version}…`, 100);
+      activate(pend.version);
+      await minShow();
+      app.relaunch(); app.exit(0);
+      return true;
+    }
+    const base = serverBase();
+    say('Verificando atualizações…', null);
+    const info = base ? await fetchLatest(base, 4000).catch(() => null) : null;
+    if (info && info.version && newer(info.version, CORE_VERSION)) {
+      say(`Baixando ${info.version}…`, 0);
+      await downloadCore(base, info, (p) => say(`Baixando ${info.version}…`, p));
+      say(`Instalando ${info.version}…`, 100);
+      activate(info.version);
+      await minShow();
+      app.relaunch(); app.exit(0);
+      return true;
+    }
+    say('Abrindo…', null);
+  } catch (e) {
+    say('Abrindo…', null);
+  }
+  await minShow();
+  if (!splash.isDestroyed()) {
+    // fecha a abertura assim que a janela principal aparecer
+    const close = () => { if (!splash.isDestroyed()) splash.destroy(); };
+    app.once('browser-window-created', (_e, w) => w.once('ready-to-show', close));
+    setTimeout(close, 6000);
+  }
+  return false;
+}
+
 async function checkForUpdates() {
   if (downloading) return;
   const base = serverBase();
   if (!base) return pushUpdate({ state: 'none' });
   try {
-    // já baixada e esperando o clique?
     const pend = readPending();
     pushUpdate({ state: 'checking' });
-    const r = await net.fetch(`${base}/update/latest.json?t=${Date.now()}`, { cache: 'no-store' });
-    if (!r.ok) return pushUpdate(pend ? { state: 'ready', version: pend.version, notes: pend.notes } : { state: 'none' });
-    const info = await r.json();
+    const info = await fetchLatest(base, 8000);
+    if (!info) return pushUpdate(pend ? { state: 'ready', version: pend.version, notes: pend.notes } : { state: 'none' });
     if (!info.version || !newer(info.version, CORE_VERSION)) return pushUpdate({ state: 'none' });
     if (pend && pend.version === info.version) return pushUpdate({ state: 'ready', version: info.version, notes: info.notes || '' });
     downloading = true;
     pushUpdate({ state: 'downloading', version: info.version, notes: info.notes || '', percent: 0 });
-    const res = await net.fetch(new URL(info.bundle, base + '/').toString(), { cache: 'no-store' });
-    if (!res.ok) throw new Error('download ' + res.status);
-    const buf = Buffer.from(await res.arrayBuffer());
-    const hash = crypto.createHash('sha256').update(buf).digest('hex');
-    if (info.sha256 && hash !== info.sha256) throw new Error('arquivo corrompido');
-    const pack = JSON.parse(zlib.gunzipSync(buf).toString('utf8'));
-    const dest = path.join(UPD_DIR(), String(info.version));
-    fs.rmSync(dest, { recursive: true, force: true });
-    for (const [rel, b64] of Object.entries(pack.files || {})) {
-      const safe = path.normalize(rel).replace(/^(\.\.(\/|\\|$))+/, '');
-      const out = path.join(dest, safe);
-      if (!out.startsWith(dest)) continue;
-      fs.mkdirSync(path.dirname(out), { recursive: true });
-      fs.writeFileSync(out, Buffer.from(b64, 'base64'));
-    }
-    if (!fs.existsSync(path.join(dest, 'main.js'))) throw new Error('pacote incompleto');
+    await downloadCore(base, info, (p) => pushUpdate({ percent: p }));
     fs.writeFileSync(path.join(UPD_DIR(), 'pending.json'), JSON.stringify({ version: info.version, notes: info.notes || '' }));
     downloading = false;
     pushUpdate({ state: 'ready', version: info.version, notes: info.notes || '' });
@@ -196,14 +282,11 @@ function setupUpdater() {
   ipcMain.handle('update-check', () => checkForUpdates());
   ipcMain.handle('update-install', () => {
     const pend = readPending();
-    if (pend) {
-      fs.writeFileSync(path.join(UPD_DIR(), 'current.json'), JSON.stringify({ version: pend.version }));
-      try { fs.unlinkSync(path.join(UPD_DIR(), 'pending.json')); } catch {}
-    }
+    if (pend) activate(pend.version);
     app.relaunch();
     app.exit(0);
   });
-  setTimeout(checkForUpdates, 4000);
+  setTimeout(checkForUpdates, 60 * 1000);
   setInterval(checkForUpdates, 30 * 60 * 1000);
 }
 

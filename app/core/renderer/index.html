@@ -2,9 +2,10 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src ws: wss: https: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src ws: wss: https: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'wasm-unsafe-eval'" />
   <title>TriMeet</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="settings.css" />
 </head>
 <body>
   <!-- Ícones -->
@@ -45,6 +46,10 @@
       <symbol id="i-headset" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="2"/><rect x="17" y="14" width="4" height="7" rx="2"/></symbol>
       <symbol id="i-deaf" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 12.7-6.5M20 12v3"/><rect x="3" y="14" width="4" height="7" rx="2"/><rect x="17" y="14" width="4" height="7" rx="2"/><path d="M3 3l18 18"/></symbol>
       <symbol id="i-phone-off" viewBox="0 0 24 24"><path d="M3.5 13.5c4.7-4.7 12.3-4.7 17 0l-1.8 2.5-3.2-1.2v-2.6a10 10 0 0 0-7 0v2.6L5.3 16z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
       <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
       <radialGradient id="orbG" cx="50%" cy="82%" r="80%"><stop offset="0" stop-color="#07060a"/><stop offset=".30" stop-color="#0b0912"/><stop offset=".40" stop-color="#ff8a3d"/><stop offset=".47" stop-color="#ffd2a6"/><stop offset=".55" stop-color="#9fb7d9"/><stop offset=".66" stop-color="#5d7fc4"/><stop offset=".80" stop-color="#2c3766"/><stop offset="1" stop-color="#151a33"/></radialGradient>
       <linearGradient id="orbH" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
@@ -74,17 +79,6 @@
         </label>
       </div>
 
-      <label class="field room-field">
-        <svg class="ic"><use href="#i-door"/></svg>
-        <input id="roomInput" type="text" maxlength="32" placeholder="Código da sala" spellcheck="false" autocomplete="off" />
-        <button id="diceBtn" class="btn icon ghost" type="button" title="Gerar código"><svg class="ic"><use href="#i-dice"/></svg></button>
-      </label>
-
-      <details class="adv">
-        <summary><svg class="ic"><use href="#i-gear"/></svg>Servidor</summary>
-        <input id="serverInput" type="text" spellcheck="false" />
-      </details>
-
       <button id="enterBtn" class="btn primary wide" disabled><span id="enterTxt">Entrar</span><svg class="ic"><use href="#i-arrow"/></svg></button>
       <p id="loginErr" class="err"></p>
 
@@ -95,43 +89,56 @@
     </div>
   </section>
 
-  <!-- ============ SALA ============ -->
+  <!-- ============ SERVIDOR (estilo Discord) ============ -->
   <section id="room" class="screen hidden">
-    <header class="topbar glass" data-glass="999">
-      <button id="homeBtn" class="brand home-btn" title="Voltar ao início"><svg class="mark"><use href="#logo"/></svg>TriMeet</button>
-      <span class="sep"></span>
-      <div id="people" class="people"></div>
-      <span class="grow"></span>
-      <button id="roomChip" class="room-chip" title="Copiar código da sala"><svg class="ic"><use href="#i-door"/></svg><span class="mono" id="roomName"></span><svg class="ic cp"><use href="#i-copy"/></svg></button>
-      <span id="connState" class="conn" title="conectando"><i></i></span>
-      <button id="updBtn" class="btn update hidden"><svg class="ic"><use href="#i-download"/></svg><span>Atualizar</span></button>
-    </header>
+    <aside class="sidebar glass" data-glass="26">
+      <button id="homeBtn" class="side-head" title="Sair do TriMeet"><svg class="mark"><use href="#logo"/></svg><span>TriMeet</span></button>
 
-    <main id="stage" class="stage">
-      <div id="empty" class="empty">
-        <div class="big-orb">
-          <div class="orb-glow"></div>
-          <div class="orb-content">
-            <span class="spinner"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-            <span>Ninguém ao vivo</span>
+      <div class="side-label">
+        <span>Salas</span>
+        <button id="addRoomBtn" class="btn icon ghost sm" title="Criar sala"><svg class="ic"><use href="#i-plus"/></svg></button>
+      </div>
+      <div id="channels" class="channels"></div>
+
+      <div class="me-panel">
+        <span class="me-orb" id="meOrbSmall"></span>
+        <div class="me-info"><b id="meName"></b><span id="meStatus">Online</span></div>
+        <button id="micBtn" class="btn icon sm" title="Mutar (M)"><svg class="ic"><use href="#i-mic"/></svg></button>
+        <button id="deafBtn" class="btn icon sm" title="Desativar som"><svg class="ic"><use href="#i-headset"/></svg></button>
+        <button id="settingsBtn" class="btn icon sm" title="Configurações"><svg class="ic"><use href="#i-gear"/></svg></button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar glass" data-glass="999">
+        <div class="chan-title" id="chanTitle"><svg class="ic"><use href="#i-speaker"/></svg><span id="chanName">TriMeet</span></div>
+        <span class="sep" id="chanSep"></span>
+        <div id="people" class="people"></div>
+        <span class="grow"></span>
+        <span id="connState" class="conn" title="conectando"><i></i></span>
+        <button id="updBtn" class="btn update hidden"><svg class="ic"><use href="#i-download"/></svg><span>Atualizar</span></button>
+      </header>
+
+      <main id="stage" class="stage">
+        <div id="empty" class="empty">
+          <div class="big-orb">
+            <div class="orb-glow"></div>
+            <div class="orb-content">
+              <span class="spinner"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <span id="emptyTxt">Escolha uma sala</span>
+            </div>
           </div>
         </div>
-      </div>
-      <div id="focus" class="focus hidden"></div>
-      <div id="grid" class="grid"></div>
-    </main>
+        <div id="focus" class="focus hidden"></div>
+        <div id="grid" class="grid"></div>
+      </main>
 
-    <nav class="dock glass" data-glass="999">
-      <div class="voice-group">
-        <button id="micBtn" class="btn icon hidden" title="Mutar (M)"></button>
-        <button id="deafBtn" class="btn icon hidden" title="Desativar som"></button>
-        <button id="voiceBtn" class="btn icon voice" title="Entrar na voz"><svg class="ic"><use href="#i-headset"/></svg></button>
-      </div>
-      <span class="dock-sep"></span>
-      <button id="shareBtn" class="btn primary"><svg class="ic"><use href="#i-share"/></svg>Compartilhar</button>
-      <button id="statsBtn" class="btn icon" title="Estatísticas"><svg class="ic"><use href="#i-chart"/></svg></button>
-      <button id="leaveBtn" class="btn icon danger" title="Sair"><svg class="ic"><use href="#i-leave"/></svg></button>
-    </nav>
+      <nav class="dock glass" data-glass="999" id="dock">
+        <button id="shareBtn" class="btn primary"><svg class="ic"><use href="#i-share"/></svg>Compartilhar</button>
+        <button id="statsBtn" class="btn icon" title="Estatísticas"><svg class="ic"><use href="#i-chart"/></svg></button>
+        <button id="leaveBtn" class="btn icon danger" title="Sair da sala"><svg class="ic"><use href="#i-phone-off"/></svg></button>
+      </nav>
+    </div>
   </section>
 
   <!-- ============ COMPARTILHAR ============ -->
@@ -213,6 +220,8 @@
   <div id="toast" class="toast glass hidden" data-glass="999"></div>
 
   <script src="config.js"></script>
+  <script src="audio.js"></script>
+  <script src="settings.js"></script>
   <script src="glass.js"></script>
   <script src="halftone.js"></script>
   <script src="app.js"></script>
