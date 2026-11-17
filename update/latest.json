@@ -1,1 +1,1 @@
-{"version": "5.0", "notes": "Salas estilo Discord, câmera, efeitos, cargos e atualização automática", "bundle": "/update/core-5.0.bin", "sha256": "d64864641dcb6031d8f1e3035c96ae2daaff3a41df2f8b77cf845106b4eba2c8"}
+{"version": "6.0", "notes": "Fechar no X deixa o TriMeet rodando na bandeja (continua na chamada). Abrir de novo volta para a mesma janela. Corrigido o botão Entrar travado.", "bundle": "/update/core-6.0.bin", "sha256": "d8876b06e7f5b36aac79f9e4e5c04cf181d58a07260668a6e513224f7827f7e7"}

@@ -188,10 +188,10 @@ async function enter() {
   $('#loginErr').textContent = '';
   $('#enterBtn').disabled = true;
   if (!serverBase()) { $('#loginErr').textContent = 'Servidor não configurado'; renderLogin(); return; }
-  await window.trimeet.saveConfig(c);
+  try { await Promise.race([window.trimeet.saveConfig(c), new Promise((r) => setTimeout(r, 3000))]); } catch {}
   // credenciais do retransmissor (TURN) — se falhar, segue só com conexão direta
   try {
-    const r = await fetch(`${serverBase()}/turn?key=${encodeURIComponent(CONF.key)}`, { cache: 'no-store' });
+    const r = await fetch(`${serverBase()}/turn?key=${encodeURIComponent(CONF.key)}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
     if (r.ok) { const d = await r.json(); if (Array.isArray(d.iceServers) && d.iceServers.length) state.iceServers = d.iceServers; }
   } catch {}
   state.myName = c.name;

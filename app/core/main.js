@@ -1,5 +1,5 @@
 // TriMeet - processo principal (Electron)
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, screen, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const zlib = require('zlib');
@@ -13,7 +13,15 @@ const CORE_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'version.js
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
+// Só um TriMeet por vez (estilo Discord): abrir de novo só mostra o que já está rodando
+if (!process.env.TRIMEET_MULTI && !app.requestSingleInstanceLock()) {
+  app.quit();
+  return;
+}
+
 let win;
+let tray = null;
+let quitting = false;
 let pendingSourceId = null;
 let pendingAudio = true;
 
@@ -41,8 +49,58 @@ function createWindow() {
     win.webContents.on('console-message', (_e, level, message) => console.log(`[${process.env.TRIMEET_AUTOTEST}] ${message}`));
   }
   win.once('ready-to-show', () => win.show());
+  // X da janela: não fecha, só esconde (continua na chamada, ícone fica na bandeja)
+  win.on('close', (e) => {
+    if (quitting) return;
+    e.preventDefault();
+    win.hide();
+    hintTrayOnce();
+  });
+  win.on('closed', () => { win = null; });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  createTray();
 }
+
+function showMain() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function quitApp() {
+  quitting = true;
+  app.quit();
+}
+
+function createTray() {
+  if (tray) return;
+  try {
+    let img = nativeImage.createFromPath(path.join(app.getAppPath(), 'build', 'icon.png'));
+    if (!img.isEmpty()) img = img.resize({ width: 32, height: 32, quality: 'best' });
+    tray = new Tray(img);
+    tray.setToolTip('TriMeet');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Abrir TriMeet', click: showMain },
+      { type: 'separator' },
+      { label: 'Sair do TriMeet', click: quitApp },
+    ]));
+    tray.on('click', showMain);
+    tray.on('double-click', showMain);
+  } catch (e) { console.warn('tray', e); }
+}
+
+// na primeira vez que a pessoa fecha, avisa onde o TriMeet ficou
+function hintTrayOnce() {
+  const flag = path.join(app.getPath('userData'), 'tray-hint.flag');
+  if (fs.existsSync(flag)) return;
+  try { fs.writeFileSync(flag, '1'); } catch {}
+  notifyQueue.push({ name: 'TriMeet', text: 'Continua rodando na bandeja, perto do relógio', color: '#8a8f98' });
+  showNextNotify();
+}
+
+app.on('second-instance', () => showMain());
+app.on('before-quit', () => { quitting = true; });
 
 app.whenReady().then(() => {
   // Quando o app chama getDisplayMedia, entregamos a tela escolhida + áudio do PC (loopback)
@@ -292,6 +350,7 @@ function setupUpdater() {
   ipcMain.handle('update-install', () => {
     const pend = readPending();
     if (pend) activate(pend.version);
+    quitting = true;
     app.relaunch();
     app.exit(0);
   });
@@ -349,4 +408,5 @@ ipcMain.handle('notify', (_e, data) => {
   showNextNotify();
 });
 
-app.on('window-all-closed', () => app.quit());
+// Fechar janelas não encerra o app: ele só sai pelo menu da bandeja ("Sair do TriMeet")
+app.on('window-all-closed', () => { if (quitting) app.quit(); });
