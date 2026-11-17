@@ -681,9 +681,11 @@ body.idle #stage { cursor: auto; }
 .topbar #people, .topbar #chanSep { display: none !important; }
 .member .badges { display: none !important; }
 
-/* tela inicial: destaque no "Pronto." */
+/* tela inicial: destaque no "Pronto." (branco puro, sem degradê) */
 .hero h1 { font-weight: 500; color: rgba(245, 245, 247, .5); }
-.hero h1 span { display: inline-block; font-weight: 800; letter-spacing: -.05em;
-  background: linear-gradient(100deg, #ffffff 0%, #ffffff 45%, #ffd2a6 75%, #ff8a3d 100%);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  filter: drop-shadow(0 6px 40px rgba(255, 138, 61, .25)); }
+.hero h1 span { font-weight: 800; color: #fff; letter-spacing: -.05em; }
+
+/* botão de atualizar na tela inicial */
+.link.upd-pill { height: 30px; padding: 0 14px 0 10px; border-radius: 999px; background: var(--ok); color: #031407; font-weight: 650; font-size: 12.5px; }
+.link.upd-pill:hover { color: #031407; background: #4be062; }
+.link.upd-pill .ic { width: 15px; height: 15px; }

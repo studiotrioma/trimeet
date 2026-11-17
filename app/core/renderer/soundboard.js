@@ -98,11 +98,11 @@
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     return b;
   }
-  function synth(id) {
+  function synth(id, gainMul = 1) {
     const c = actx();
     const t0 = c.currentTime + 0.02;
     const out = c.createGain();
-    out.connect(master);
+    if (gainMul !== 1) { const g = actx().createGain(); g.gain.value = gainMul; out.connect(g); g.connect(master); } else out.connect(master);
     if (id === 'b-sino') {
       [[880, 0.5], [1320, 0.25], [1760, 0.12], [2637, 0.06]].forEach(([f, a]) => {
         const o = c.createOscillator(), g = c.createGain();
@@ -178,16 +178,17 @@
     return buf;
   }
 
-  async function play(id) {
+  async function play(id, gainMul = 1) {
     const s = find(id);
     if (!s) return false;
-    if (s.builtin) { synth(id); return true; }
+    if (gainMul <= 0) return true;
+    if (s.builtin) { synth(id, gainMul); return true; }
     try {
       const buf = await bufferFor(s);
       const c = actx();
       const src = c.createBufferSource();
       src.buffer = buf;
-      src.connect(master);
+      if (gainMul !== 1) { const g = c.createGain(); g.gain.value = gainMul; src.connect(g); g.connect(master); } else src.connect(master);
       src.start();
       return true;
     } catch { return false; }
@@ -372,7 +373,7 @@
     panel = document.createElement('div');
     panel.className = 'sfx-panel glass';
     panel.innerHTML = `<div class="sfx-head">
-        <span class="sfx-title">${ic('sparkles')}Efeitos</span>
+        <span class="sfx-title">${ic('audio')}Efeitos</span>
         <label class="sfx-vol" title="Volume dos efeitos">${ic('vol')}<input type="range" min="0" max="1" step="0.01" /></label>
         <button class="btn icon ghost sfx-close" title="Fechar">${ic('x')}</button>
       </div>
@@ -446,7 +447,8 @@
       lastRecv.set(m.from, now);
       const s = find(m.id);
       if (!s) return;
-      if (!api.isDeaf()) play(m.id);
+      const mul = api.volumeFor ? api.volumeFor(m.from) : 1;
+      if (!api.isDeaf()) play(m.id, mul);
       pulse(m.id);
       api.toast(`${m.from} tocou ${s.emoji} ${s.name}`);
     },

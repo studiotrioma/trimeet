@@ -807,7 +807,9 @@ function setVol(kind, name, value) {
   const vols = state.cfg.volumes || (state.cfg.volumes = { voice: {}, stream: {}, muted: {} });
   vols[kind] = vols[kind] || {};
   vols[kind][name] = Math.max(0, Math.min(1, value));
-  if (kind === 'voice') {
+  if (kind === 'sfx') {
+    // só guarda: aplicado quando a pessoa tocar um efeito
+  } else if (kind === 'voice') {
     for (const v of state.voices.values()) if (v.from === name) v.audio.volume = vols.voice[name];
   } else {
     for (const r of state.remotes.values()) if (r.from === name) {
@@ -900,6 +902,7 @@ function openPersonMenu(e, name, chId) {
   openMenu(e, (m) => {
     menuHead(m, name, here ? (live ? 'Ao vivo nesta sala' : 'Nesta sala') : (state.channels.get(chId)?.name ? 'Na sala ' + state.channels.get(chId).name : ''));
     menuSlider(m, 'headset', 'Volume da voz', getVol('voice', name), (v) => setVol('voice', name, v));
+    menuSlider(m, 'audio', 'Volume dos efeitos', getVol('sfx', name), (v) => setVol('sfx', name, v));
     menuItem(m, 'mic-off', 'Silenciar para mim', () => setLocalMute(name, !isLocalMuted(name)), { check: isLocalMuted(name) });
     if (live) {
       menuSep(m);
@@ -1967,6 +1970,7 @@ window.TMSound?.init({
   myName: () => state.myName,
   inChannel: () => !!state.channelId,
   isDeaf: () => !!(state.voice ? state.voice.deaf : state.pref.deaf),
+  volumeFor: (name) => (isLocalMuted(name) ? 0 : getVol('sfx', name)),
   toast,
   orbHTML,
   icon,
@@ -2011,6 +2015,8 @@ function renderUpdate(u) {
   if (u.state === 'checking') chk.disabled = true;
 
   const ready = u.state === 'ready';
+  chk.classList.toggle('upd-pill', ready);
+  if (ready) lbl.textContent = `Atualizar para v${u.version}`;
   const btn = $('#updBtn');
   btn.classList.toggle('hidden', !ready);
   if (ready) { btn.querySelector('span').textContent = `v${u.version}`; btn.title = u.notes || 'Atualizar e reiniciar'; }

@@ -296,7 +296,7 @@ function setupUpdater() {
     app.exit(0);
   });
   setTimeout(checkForUpdates, 60 * 1000);
-  setInterval(checkForUpdates, 30 * 60 * 1000);
+  setInterval(checkForUpdates, 10 * 60 * 1000); // com o app aberto, procura novidades a cada 10 min
 }
 
 // ===================================================================
