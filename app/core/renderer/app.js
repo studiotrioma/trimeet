@@ -727,7 +727,12 @@ async function startShare(sourceId, label, opts, kind = 'screen') {
       audio: opts.audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000, restrictOwnAudio: true } : false,
     });
     const sa = stream.getAudioTracks()[0];
-    if (sa) console.log('som do PC: restrictOwnAudio=' + (sa.getSettings && sa.getSettings().restrictOwnAudio));
+    if (sa) {
+      const dev = (sa.getSettings && sa.getSettings().deviceId) || '';
+      opts.voiceFilter = dev === 'loopbackWithoutChrome';
+      console.log('som do PC: deviceId=' + dev);
+      toast(opts.voiceFilter ? 'Som do PC sem as vozes da chamada' : `Som do PC inclui as vozes (motor ${String(window.trimeet.engine).split('.')[0]}, ${dev || 'sem id'})`);
+    }
   } catch (e) {
     toast('Não foi possível capturar a tela: ' + e.message);
     return;
@@ -1236,7 +1241,7 @@ function applyAllParams(peer) {
 }
 
 function announceShares(to) {
-  const list = [...state.shares.entries()].map(([id, s]) => ({ id, label: s.label, kind: s.kind }));
+  const list = [...state.shares.entries()].map(([id, s]) => ({ id, label: s.label, kind: s.kind, vf: s.opts?.audio ? (s.opts.voiceFilter ? 1 : 0) : null, eng: String(window.trimeet.engine || '').split('.')[0] }));
   if (state.voice) list.push({ id: state.voice.id, label: 'Voz', kind: 'voice' });
   if (state.cam) list.push({ id: state.cam.id, label: 'Câmera', kind: 'camera' });
   send(to ? { type: 'shares', to, list } : { type: 'shares', list });
@@ -1246,7 +1251,12 @@ function announceShares(to) {
 // Transmissões dos amigos
 // ===================================================================
 function onRemoteShares(from, list) {
-  const meta = new Map(list.map((s) => [s.id, { label: s.label, kind: s.kind || 'screen' }]));
+  const meta = new Map(list.map((s) => [s.id, { label: s.label, kind: s.kind || 'screen', vf: s.vf, eng: s.eng }]));
+  // diagnóstico: a transmissão manda o som do PC sem filtrar as vozes da chamada (você ouviria a própria voz)
+  state.vfWarned = state.vfWarned || new Set();
+  for (const s of list) {
+    if (s.vf === 0 && !state.vfWarned.has(s.id)) { state.vfWarned.add(s.id); toast(`O som da tela de ${from} não tira as vozes (motor ${s.eng || '?'})`); }
+  }
   state.remoteMeta.set(from, meta);
   for (const [id, r] of state.remotes) {
     if (r.from !== from) continue;
@@ -2054,7 +2064,7 @@ let lastUpd = null;
 function renderUpdate(u) {
   lastUpd = u;
   const short = (v) => String(v || '').replace(/\.0(\.0)?$/, '.0').replace(/^(\d+)\.0\.0$/, '$1.0');
-  $('#verTxt').textContent = `v${short(u.current)}`;
+  $('#verTxt').textContent = `v${short(u.current)} · motor ${String(window.trimeet.engine || '?').split('.')[0]}`;
   const chk = $('#checkUpd');
   const lbl = chk.querySelector('span');
   chk.disabled = false;

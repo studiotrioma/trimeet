@@ -15,4 +15,5 @@ contextBridge.exposeInMainWorld('trimeet', {
   updateInstall: () => ipcRenderer.invoke('update-install'),
   onUpdate: (cb) => ipcRenderer.on('update-status', (_e, s) => cb(s)),
   autotest: process.env.TRIMEET_AUTOTEST || null,
+  engine: process.versions.electron,
 });
