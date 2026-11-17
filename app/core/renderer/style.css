@@ -682,7 +682,7 @@ body.idle #stage { cursor: auto; }
 .member .badges { display: none !important; }
 
 /* tela inicial: destaque no "Pronto." (branco puro, sem degradê) */
-.hero h1 { font-weight: 500; color: rgba(245, 245, 247, .5); }
+.hero h1 { font-weight: 500; color: #9d9da3; text-shadow: 0 0 2px #000, 0 0 18px rgba(0,0,0,.95), 0 0 42px rgba(0,0,0,.85); }
 .hero h1 span { font-weight: 800; color: #fff; letter-spacing: -.05em; }
 
 /* botão de atualizar na tela inicial */
