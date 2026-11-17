@@ -978,7 +978,7 @@ function openTileMenu(e, { id, name, mine, tile }) {
     menuHead(m, mine ? state.myName : name, mine ? 'Sua transmissão' : 'Transmissão');
     if (!mine) menuSlider(m, 'vol', 'Volume da transmissão', getVol('stream', name), (v) => setVol('stream', name, v));
     const pinned = state.focusId === id;
-    menuItem(m, pinned ? 'shrink' : 'expand', pinned ? 'Desafixar' : 'Fixar em destaque', () => { state.focusId = pinned ? null : id; layout(); });
+    menuItem(m, pinned ? 'pin-off' : 'pin', pinned ? 'Desafixar' : 'Fixar em destaque', () => { state.focusId = pinned ? null : id; layout(); });
     menuItem(m, 'full', 'Tela cheia', () => toggleFullscreen(tile));
     menuSep(m);
     if (state.cam && id === state.cam.id) menuItem(m, 'camera-off', 'Desligar câmera', toggleCamera, { danger: true });
@@ -1274,7 +1274,7 @@ function makeTile({ id, name, label, kind, stream, mine }) {
     <div class="chip ctrls">
       ${mine ? '' : `<div class="vol"><button class="btn icon mute" title="Mudo">${icon('vol')}</button><input type="range" min="0" max="1" step="0.01" value="1" title="Volume"></div>`}
       <button class="btn icon sbtn" title="Estatísticas">${icon('chart')}</button>
-      <button class="btn icon fbtn" title="Destacar">${icon('expand')}</button>
+      <button class="btn icon fbtn" title="Fixar em destaque">${icon('pin')}</button>
       <button class="btn icon fsbtn" title="Tela cheia">${icon('full')}</button>
       ${mine || kind === 'camera' ? '' : `<button class="btn icon xbtn" title="Parar de assistir">${icon('stop', 'fill')}</button>`}
     </div>`;
@@ -1339,7 +1339,7 @@ function layout(noTransition) {
         t.querySelector('video')?.play().catch(() => {}); // mover o elemento pausa o vídeo
       }
       const fb = t.querySelector('.fbtn');
-      if (fb) { fb.innerHTML = icon(isF ? 'shrink' : 'expand'); fb.title = isF ? 'Voltar' : 'Destacar'; }
+      if (fb) { fb.innerHTML = icon(isF ? 'pin-off' : 'pin'); fb.title = isF ? 'Desafixar' : 'Fixar em destaque'; fb.classList.toggle('on', isF); }
     }
     grid.className = 'grid';
     stage.classList.toggle('has-focus', !!state.focusId);
