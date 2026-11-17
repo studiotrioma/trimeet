@@ -321,6 +321,11 @@ async function startupUpdate() {
       app.relaunch(); app.exit(0);
       return true;
     }
+    // motor (Electron) novo? baixa o instalador e instala sozinho, sem perguntas
+    if (info && engineOutdated(info)) {
+      const ok = await upgradeEngine(info.engine, (p) => say('Atualizando o motor…', p));
+      if (ok) { say('Reiniciando…', 100); await minShow(); app.exit(0); return true; }
+    }
     say('Abrindo…', null);
   } catch (e) {
     say('Abrindo…', null);
@@ -335,6 +340,54 @@ async function startupUpdate() {
   return false;
 }
 
+// ---- troca do motor (Electron) pelo próprio app ----
+// Algumas melhorias (ex.: tirar a voz dos amigos do som do PC compartilhado) precisam de um motor
+// mais novo, que só vem pelo instalador. O app baixa o instalador e roda em modo silencioso.
+const ENGINE_TRY = () => path.join(app.getPath('userData'), 'engine-try.json');
+function engineOutdated(info) {
+  const e = info && info.engine;
+  if (!e || !e.electron || !e.url || process.platform !== 'win32') return false;
+  if (!newer(e.electron, process.versions.electron)) return false;
+  // se já tentou 2x essa mesma versão e não pegou, não insiste (abre normal)
+  try { const t = JSON.parse(fs.readFileSync(ENGINE_TRY(), 'utf8')); if (t.electron === e.electron && t.n >= 2) return false; } catch {}
+  return true;
+}
+async function upgradeEngine(e, onProgress) {
+  let n = 0;
+  try { const t = JSON.parse(fs.readFileSync(ENGINE_TRY(), 'utf8')); if (t.electron === e.electron) n = t.n || 0; } catch {}
+  fs.writeFileSync(ENGINE_TRY(), JSON.stringify({ electron: e.electron, n: n + 1, ts: Date.now() }));
+  try {
+    const res = await net.fetch(e.url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('download ' + res.status);
+    const total = parseInt(res.headers.get('content-length') || '0', 10) || e.size || 0;
+    const dir = path.join(app.getPath('temp'), 'trimeet-motor');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'TriMeet-Instalador.exe');
+    const out = fs.createWriteStream(file);
+    const hash = crypto.createHash('sha256');
+    const reader = res.body.getReader();
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const b = Buffer.from(value);
+      hash.update(b);
+      if (!out.write(b)) await new Promise((r) => out.once('drain', r));
+      got += b.length;
+      if (onProgress && total) onProgress(Math.min(99, Math.round((got / total) * 100)));
+    }
+    await new Promise((r, j) => out.end((err) => (err ? j(err) : r())));
+    if (e.sha256 && hash.digest('hex') !== e.sha256) throw new Error('instalador corrompido');
+    const { spawn } = require('child_process');
+    quitting = true;
+    spawn(file, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
+    return true;
+  } catch (err) {
+    console.warn('motor', err);
+    return false;
+  }
+}
+
 async function checkForUpdates() {
   if (downloading) return;
   const base = serverBase();
@@ -344,7 +397,9 @@ async function checkForUpdates() {
     pushUpdate({ state: 'checking' });
     const info = await fetchLatest(base, 8000);
     if (!info) return pushUpdate(pend ? { state: 'ready', version: pend.version, notes: pend.notes } : { state: 'none' });
-    if (!info.version || !newer(info.version, CORE_VERSION)) return pushUpdate({ state: 'none' });
+    if (!info.version || !newer(info.version, CORE_VERSION)) {
+      return pushUpdate(engineOutdated(info) ? { state: 'ready', version: info.version, notes: 'Motor novo', engine: true } : { state: 'none' });
+    }
     if (pend && pend.version === info.version) return pushUpdate({ state: 'ready', version: info.version, notes: info.notes || '' });
     downloading = true;
     pushUpdate({ state: 'downloading', version: info.version, notes: info.notes || '', percent: 0 });

@@ -18,6 +18,9 @@ os.makedirs(pub, exist_ok=True)
 for f in os.listdir(pub): os.remove(os.path.join(pub, f))
 name = f'core-{ver}.bin'
 open(os.path.join(pub, name), 'wb').write(blob)
-json.dump({'version': ver, 'notes': notes, 'bundle': f'/update/{name}', 'sha256': hashlib.sha256(blob).hexdigest()},
-          open(os.path.join(pub, 'latest.json'), 'w'), ensure_ascii=False)
+latest = {'version': ver, 'notes': notes, 'bundle': f'/update/{name}', 'sha256': hashlib.sha256(blob).hexdigest()}
+# motor (Electron) mínimo: apps com motor mais velho baixam o instalador e atualizam sozinhos
+eng = os.path.join(os.path.dirname(__file__), 'engine.json')
+if os.path.exists(eng): latest['engine'] = json.load(open(eng))
+json.dump(latest, open(os.path.join(pub, 'latest.json'), 'w'), ensure_ascii=False)
 print(f'{name}: {len(blob)//1024} KB, {len(files)} arquivos')
