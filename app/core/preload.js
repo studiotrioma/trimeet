@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('trimeet', {
   selectSource: (id, withAudio) => ipcRenderer.invoke('select-source', id, withAudio),
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (cfg) => ipcRenderer.invoke('save-config', cfg),
+  soundsLoad: () => ipcRenderer.invoke('sounds-load'),
+  soundsSave: (list) => ipcRenderer.invoke('sounds-save', list),
   localIps: () => ipcRenderer.invoke('local-ips'),
   platform: process.platform,
   updateGet: () => ipcRenderer.invoke('update-get'),

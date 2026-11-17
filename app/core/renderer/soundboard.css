@@ -1,0 +1,75 @@
+/* ==========================================================================
+   Soundboard (efeitos sonoros)
+   ========================================================================== */
+.sfx-panel { position: fixed; z-index: 70; width: 400px; max-width: calc(100vw - 24px); max-height: min(520px, calc(100vh - 140px));
+  display: flex; flex-direction: column; border-radius: 26px; padding: 10px; --glass-tint: rgba(22, 22, 25, .86);
+  animation: sfxIn 420ms var(--spring) both; }
+.sfx-panel.leaving { animation: sfxOut 170ms ease-in both; }
+@keyframes sfxIn { from { opacity: 0; transform: translateY(14px) scale(.94); filter: blur(6px); } }
+@keyframes sfxOut { to { opacity: 0; transform: translateY(8px) scale(.97); } }
+.sfx-panel.cool .sfx-grid { animation: sfxShake 280ms ease; }
+@keyframes sfxShake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+.sfx-head { display: flex; align-items: center; gap: 10px; padding: 2px 2px 10px 10px; }
+.sfx-title { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; font-size: 15px; letter-spacing: -.01em; }
+.sfx-title .ic { width: 18px; height: 18px; color: #ffd2a6; }
+.sfx-vol { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--text-3); }
+.sfx-vol .ic { width: 16px; height: 16px; }
+.sfx-vol input[type=range] { width: 110px; }
+.sfx-head .btn.icon { width: 34px; height: 34px; }
+
+.sfx-body { overflow-y: auto; min-height: 0; }
+.sfx-body::-webkit-scrollbar { width: 0; }
+.sfx-msg { display: flex; align-items: center; gap: 8px; margin: 0 4px 10px; padding: 10px 12px; border-radius: 14px;
+  background: rgba(255, 255, 255, .05); color: var(--text-2); font-size: 12.5px; }
+.sfx-msg .ic { width: 15px; height: 15px; flex: none; }
+.sfx-msg.err { background: rgba(255, 69, 58, .12); color: var(--live); }
+
+.sfx-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 2px; }
+.sfx-item { position: relative; animation: rise 420ms var(--spring) both; }
+.sfx-play { width: 100%; height: 84px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  border-radius: 18px; background: var(--fill-2); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05);
+  transition: background 180ms ease, transform 100ms ease-out, box-shadow 250ms ease; }
+.sfx-play:hover { background: var(--fill-3); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12); }
+.sfx-play:active { transform: scale(.94); transition-duration: 60ms; }
+.sfx-play .emo { font-size: 30px; line-height: 1; transition: transform var(--d-bounce) var(--spring-bounce); }
+.sfx-play:hover .emo { transform: scale(1.12) rotate(-6deg); }
+.sfx-play .nm { font-size: 12.5px; font-weight: 550; color: var(--text-2); max-width: 100%; padding: 0 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sfx-item.pulse .sfx-play { animation: sfxPulse 620ms var(--spring-bounce); }
+.sfx-item.pulse .emo { animation: sfxEmo 620ms var(--spring-bounce); }
+@keyframes sfxPulse { 0% { box-shadow: inset 0 0 0 2px #ffd2a6, 0 0 0 0 rgba(255, 138, 61, .45); } 100% { box-shadow: inset 0 0 0 1px rgba(255,255,255,.05), 0 0 0 14px rgba(255, 138, 61, 0); } }
+@keyframes sfxEmo { 30% { transform: scale(1.35) rotate(8deg); } }
+
+.sfx-acts { position: absolute; top: 5px; right: 5px; display: flex; gap: 2px; opacity: 0; transform: scale(.9);
+  transition: opacity 160ms ease, transform 260ms var(--spring); }
+.sfx-item:hover .sfx-acts, .sfx-item.show-acts .sfx-acts { opacity: 1; transform: none; }
+.sfx-acts button { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 9px; color: var(--text-2);
+  background: rgba(0, 0, 0, .45); backdrop-filter: blur(8px); transition: background 150ms, color 150ms; }
+.sfx-acts button:hover { background: rgba(255, 255, 255, .14); color: var(--text); }
+.sfx-acts .ic { width: 14px; height: 14px; }
+.sfx-acts .sfx-del:hover { color: var(--live); }
+.sfx-item.confirm .sfx-del { background: var(--live); color: #fff; }
+
+.sfx-add { height: 84px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border-radius: 18px;
+  color: var(--text-3); font-size: 12.5px; font-weight: 550; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .12);
+  background: transparent; transition: color 180ms, box-shadow 180ms, background 180ms, transform 100ms ease-out; }
+.sfx-add .ic { width: 22px; height: 22px; }
+.sfx-add:hover { color: var(--text); box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .03); }
+.sfx-add:active { transform: scale(.95); }
+
+.sfx-form { display: flex; flex-direction: column; gap: 10px; padding: 2px; animation: rise 360ms var(--spring) both; }
+.sfx-prev { display: flex; align-items: center; gap: 8px; height: 50px; padding: 0 14px 0 6px; border-radius: 999px; background: rgba(0, 0, 0, .35);
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 4px rgba(70, 200, 220, .14); }
+.sfx-prev .btn.icon { width: 38px; height: 38px; background: var(--fill-3); }
+.sfx-prev .btn.icon .ic { width: 15px; height: 15px; fill: currentColor; stroke: none; }
+.sfx-name { flex: 1; font: inherit; font-size: 15px; font-weight: 600; color: var(--text); background: transparent; border: none; outline: none; }
+.sfx-name::placeholder { color: var(--text-3); }
+.sfx-dur { font-size: 12px; color: var(--text-3); }
+.sfx-emojis { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; padding: 6px; border-radius: 18px; background: var(--fill-2); }
+.sfx-emo { height: 38px; border-radius: 12px; font-size: 20px; line-height: 1; transition: background 150ms, transform 260ms var(--spring-bounce); }
+.sfx-emo:hover { background: rgba(255, 255, 255, .08); transform: scale(1.1); }
+.sfx-emo.on { background: rgba(255, 255, 255, .16); box-shadow: inset 0 0 0 1.5px var(--text); }
+.sfx-row-btns { display: flex; justify-content: flex-end; gap: 8px; padding: 2px; }
+.sfx-row-btns .btn { height: 38px; }
+.dock #sfxBtn.on { background: rgba(255, 210, 166, .16); color: #ffd2a6; }

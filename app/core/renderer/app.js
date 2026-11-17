@@ -270,8 +270,10 @@ function connectHub() {
       const added = list.filter((n) => !state.hubOnline.includes(n));
       state.hubOnline = list;
       for (const n of [...state.presence.keys()]) if (!list.includes(n)) state.presence.delete(n);
-      for (const n of added) { publishPresence(n); publishChannels(n); }
+      for (const n of added) { publishPresence(n); publishChannels(n); window.TMSound?.onHubPeerAdded(n); }
       renderChannels();
+    } else if (typeof m.type === 'string' && m.type.startsWith('snd-')) {
+      window.TMSound?.onHubMessage(m);
     } else if (m.type === 'presence' && m.from) {
       state.presence.set(m.from, { ch: m.ch || null, inVoice: !!m.inVoice, muted: !!m.muted, deaf: !!m.deaf, live: !!m.live, cam: !!m.cam });
       renderChannels();
@@ -537,6 +539,9 @@ function onSignal(m) {
       break;
     case 'shares':
       onRemoteShares(m.from, m.list || []);
+      break;
+    case 'sfx':
+      window.TMSound?.onRoomMessage(m);
       break;
     case 'watch':
       handleWatch(m.from, m.id, !!m.on);
@@ -813,9 +818,9 @@ window.addEventListener('blur', closeMenu);
 window.addEventListener('resize', closeMenu);
 
 function menuHead(m, name, sub) {
-  m.insertAdjacentHTML('beforeend', `<div class="cm-head">${orbHTML(name)}<div><b></b><span></span></div></div>`);
-  m.querySelector('.cm-head b').textContent = name;
-  m.querySelector('.cm-head span').textContent = sub || '';
+  m.insertAdjacentHTML('beforeend', `<div class="cm-head">${orbHTML(name)}<div class="cm-t"><b></b><small></small></div></div>`);
+  m.querySelector('.cm-head .cm-t b').textContent = name;
+  m.querySelector('.cm-head .cm-t small').textContent = sub || '';
 }
 function menuSlider(m, ic, label, value, onInput) {
   const row = document.createElement('div');
@@ -1750,6 +1755,17 @@ $('#homeBtn').onclick = () => {
   logout();
 };
 $('#camBtn').onclick = toggleCamera;
+$('#sfxBtn').onclick = () => window.TMSound ? TMSound.togglePanel($('#sfxBtn')) : toast('Efeitos chegam na próxima versão');
+window.TMSound?.init({
+  hubSend,
+  roomSend: send,
+  myName: () => state.myName,
+  inChannel: () => !!state.channelId,
+  isDeaf: () => !!(state.voice ? state.voice.deaf : state.pref.deaf),
+  toast,
+  orbHTML,
+  icon,
+});
 $('#stopShareBtn').onclick = () => { for (const id of [...state.shares.keys()]) stopShare(id); };
 $('#stopWatchBtn').onclick = unwatchAll;
 $('#statsToggle').onclick = () => {

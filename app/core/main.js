@@ -103,6 +103,15 @@ app.whenReady().then(() => {
   ipcMain.handle('load-config', () => {
     try { return JSON.parse(fs.readFileSync(cfgPath(), 'utf8')); } catch { return null; }
   });
+  // biblioteca da soundboard (efeitos sonoros)
+  const soundsPath = () => path.join(app.getPath('userData'), 'sounds.json');
+  ipcMain.handle('sounds-load', () => {
+    try { return JSON.parse(fs.readFileSync(soundsPath(), 'utf8')); } catch { return []; }
+  });
+  ipcMain.handle('sounds-save', (_e, list) => {
+    try { fs.writeFileSync(soundsPath(), JSON.stringify(Array.isArray(list) ? list : [])); } catch {}
+    return true;
+  });
   ipcMain.handle('save-config', (_e, cfg) => {
     try { fs.writeFileSync(cfgPath(), JSON.stringify(cfg, null, 2)); } catch {}
     return true;
