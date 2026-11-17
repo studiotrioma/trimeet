@@ -33,6 +33,10 @@ const state = {
   shares: new Map(),          // shareId -> { stream, label, kind, opts, tile }
   remoteMeta: new Map(),      // nome -> Map(streamId -> {label, kind})
   remotes: new Map(),         // streamId -> { from, stream, tile, receivers: [] }
+  pending: new Map(),         // streamId -> { from, stream, receivers } (aguardando saber se é voz ou tela)
+  voice: null,                // minha voz: { id, stream, muted, deaf, meter }
+  voices: new Map(),          // streamId -> { from, stream, audio, meter }
+  vstate: new Map(),          // nome -> { inVoice, muted, deaf }
   focusId: null,
   selectedSource: null,
   srcTab: 'screen',
@@ -258,6 +262,7 @@ function onSignal(m) {
       for (const n of added) {
         ensurePeer(n);
         announceShares(n);
+        sendVoiceState(n);
       }
       renderPeople();
       break;
@@ -267,6 +272,10 @@ function onSignal(m) {
       break;
     case 'shares':
       onRemoteShares(m.from, m.list || []);
+      break;
+    case 'vstate':
+      state.vstate.set(m.from, { inVoice: !!m.inVoice, muted: !!m.muted, deaf: !!m.deaf });
+      renderPeople();
       break;
     case 'hello-shares':
       announceShares(m.from);
@@ -310,6 +319,7 @@ function ensurePeer(name) {
 
   // envia o que eu já estiver transmitindo
   for (const [id, share] of state.shares) addShareToPeer(peer, id, share);
+  if (state.voice) addVoiceToPeer(peer);
   return peer;
 }
 
@@ -317,7 +327,10 @@ function closePeer(name) {
   const peer = state.peers.get(name);
   if (peer) { try { peer.pc.close(); } catch {} state.peers.delete(name); }
   state.remoteMeta.delete(name);
+  state.vstate.delete(name);
   for (const [id, r] of state.remotes) if (r.from === name) removeRemote(id);
+  for (const [id, v] of state.voices) if (v.from === name) removeVoice(id);
+  for (const [id, p] of state.pending) if (p.from === name) state.pending.delete(id);
 }
 
 async function handleSignal(from, { description, candidate }) {
@@ -471,11 +484,13 @@ function applyAllParams(peer) {
   for (const [id, senders] of peer.senders) {
     const share = state.shares.get(id);
     if (share) senders.forEach((s) => applyParams(s, share.opts));
+    else if (state.voice && id === state.voice.id) senders.forEach(applyVoiceParams);
   }
 }
 
 function announceShares(to) {
   const list = [...state.shares.entries()].map(([id, s]) => ({ id, label: s.label, kind: s.kind }));
+  if (state.voice) list.push({ id: state.voice.id, label: 'Voz', kind: 'voice' });
   send(to ? { type: 'shares', to, list } : { type: 'shares', list });
 }
 
@@ -493,6 +508,8 @@ function onRemoteShares(from, list) {
       r.tile.querySelector('.scr use').setAttribute('href', meta.get(id).kind === 'window' ? '#i-window' : '#i-screen');
     }
   }
+  for (const [id, v] of state.voices) if (v.from === from && !meta.has(id)) removeVoice(id);
+  for (const [id, p] of state.pending) if (p.from === from && meta.has(id)) classifyStream(p.from, p.stream, p.receivers);
   renderPeople();
 }
 
@@ -502,19 +519,36 @@ function onRemoteTrack(from, ev) {
   // baixa latência: toca assim que chegar, sem "colchão" extra
   try { ev.receiver.jitterBufferTarget = 0; } catch {}
   try { ev.receiver.playoutDelayHint = 0; } catch {}
+  const p = state.pending.get(stream.id);
+  const receivers = p ? [...p.receivers, ev.receiver] : [ev.receiver];
+  classifyStream(from, stream, receivers);
+}
 
-  let r = state.remotes.get(stream.id);
-  if (!r) {
-    const m = state.remoteMeta.get(from)?.get(stream.id);
-    const tile = makeTile({ id: stream.id, name: from, label: m?.label || 'Tela', kind: m?.kind, stream, mine: false });
-    r = { from, stream, tile, receivers: [] };
-    state.remotes.set(stream.id, r);
-    stream.onremovetrack = () => { if (!stream.getTracks().length) removeRemote(stream.id); };
+// Decide se o que chegou é uma tela (tem vídeo) ou a voz de alguém
+function classifyStream(from, stream, receivers) {
+  const meta = state.remoteMeta.get(from)?.get(stream.id);
+  if (stream.getVideoTracks().length || (meta && meta.kind !== 'voice')) {
+    state.pending.delete(stream.id);
+    if (!stream.getVideoTracks().length) { state.pending.set(stream.id, { from, stream, receivers }); return; }
+    let r = state.remotes.get(stream.id);
+    if (!r) {
+      const tile = makeTile({ id: stream.id, name: from, label: meta?.label || 'Tela', kind: meta?.kind, stream, mine: false });
+      r = { from, stream, tile, receivers: [] };
+      state.remotes.set(stream.id, r);
+      stream.onremovetrack = () => { if (!stream.getTracks().length) removeRemote(stream.id); };
+    }
+    for (const rc of receivers) if (!r.receivers.includes(rc)) r.receivers.push(rc);
+    const video = r.tile.querySelector('video');
+    video.srcObject = stream;
+    video.play().catch(() => {});
+    return;
   }
-  r.receivers.push(ev.receiver);
-  const video = r.tile.querySelector('video');
-  video.srcObject = stream;
-  video.play().catch(() => {});
+  if (meta && meta.kind === 'voice') {
+    state.pending.delete(stream.id);
+    attachVoice(from, stream);
+    return;
+  }
+  state.pending.set(stream.id, { from, stream, receivers });
 }
 
 function removeRemote(id) {
@@ -623,7 +657,7 @@ function renderPeople() {
       el = document.createElement('div');
       el.className = 'person';
       el.dataset.name = n;
-      el.innerHTML = `${orbHTML(n)}<span class="nm"></span><span class="st"></span><span class="live">AO VIVO</span>`;
+      el.innerHTML = `${orbHTML(n)}<span class="nm"></span><span class="vic"></span><span class="st"></span><span class="live">AO VIVO</span>`;
       el.querySelector('.nm').innerHTML = esc(n) + (n === state.myName ? ' <span class="you">· você</span>' : '');
     }
     if (box.children[idx] !== el) box.insertBefore(el, box.children[idx] || null);
@@ -632,12 +666,21 @@ function renderPeople() {
     if (!me) {
       const cs = state.peers.get(n)?.pc?.connectionState;
       if (cs === 'connecting') { st = 'wait'; title = 'Conectando…'; }
-      if (cs === 'failed' || cs === 'disconnected') { st = 'bad'; title = 'Sem conexão direta — verifique o Tailscale'; }
+      if (cs === 'failed' || cs === 'disconnected') { st = 'bad'; title = 'Sem conexão direta — verifique a internet'; }
     }
     el.querySelector('.st').className = 'st ' + st;
     el.title = title;
-    const live = me ? state.shares.size > 0 : (state.remoteMeta.get(n)?.size || 0) > 0;
+    const live = me ? state.shares.size > 0 : [...(state.remoteMeta.get(n)?.values() || [])].some((x) => x.kind !== 'voice');
     el.classList.toggle('is-live', live);
+    const vs = me ? (state.voice ? { inVoice: true, muted: state.voice.muted, deaf: state.voice.deaf } : null) : state.vstate.get(n);
+    const vic = el.querySelector('.vic');
+    const vicKind = !vs || !vs.inVoice ? '' : vs.deaf ? 'deaf' : vs.muted ? 'mute' : 'on';
+    if (vic.dataset.k !== vicKind) {
+      vic.dataset.k = vicKind;
+      vic.innerHTML = vicKind === 'deaf' ? icon('deaf') : vicKind === 'mute' ? icon('mic-off') : vicKind === 'on' ? icon('headset') : '';
+      vic.className = 'vic ' + vicKind;
+    }
+    el.title = vicKind === 'on' ? title + ' · na voz' : vicKind === 'mute' ? title + ' · na voz (mudo)' : vicKind === 'deaf' ? title + ' · na voz (sem som)' : title;
   });
 }
 
@@ -815,6 +858,7 @@ function toast(msg) {
 
 function leave() {
   state.leaving = true;
+  leaveVoice(true);
   for (const id of [...state.shares.keys()]) stopShare(id);
   for (const n of [...state.peers.keys()]) closePeer(n);
   state.online = [];
@@ -827,6 +871,211 @@ function leave() {
     renderLogin();
   });
 }
+
+// ===================================================================
+// Voz (estilo Discord)
+// ===================================================================
+let audioCtx = null;
+function actx() {
+  if (!audioCtx) audioCtx = new AudioContext();
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  return audioCtx;
+}
+
+// medidor de volume: acende o anel verde de quem está falando
+function makeMeter(stream, onChange) {
+  try {
+    const ctx = actx();
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    src.connect(an);
+    const data = new Uint8Array(an.fftSize);
+    let speaking = false, lastLoud = 0;
+    const iv = setInterval(() => {
+      an.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / data.length);
+      const now = performance.now();
+      if (rms > 0.035) lastLoud = now;
+      const sp = now - lastLoud < 280;
+      if (sp !== speaking) { speaking = sp; onChange(sp); }
+    }, 60);
+    return { stop() { clearInterval(iv); try { src.disconnect(); } catch {} } };
+  } catch { return { stop() {} }; }
+}
+
+function setSpeaking(name, on) {
+  const el = document.querySelector(`.person[data-name="${CSS.escape(name)}"]`);
+  if (el) el.classList.toggle('speaking', on);
+}
+
+// sons curtos de entrar/sair/mutar
+function chime(kind) {
+  try {
+    const ctx = actx();
+    const notes = { join: [523.25, 783.99], leave: [659.25, 392], mute: [440], unmute: [587.33], other: [698.46, 880] }[kind] || [600];
+    notes.forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      const t = ctx.currentTime + i * 0.09;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.08, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      o.connect(g).connect(ctx.destination);
+      o.start(t); o.stop(t + 0.25);
+    });
+  } catch {}
+}
+
+function applyVoiceParams(sender) {
+  if (!sender.track) return;
+  const p = sender.getParameters();
+  if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+  p.encodings[0].maxBitrate = 96_000;
+  p.encodings[0].priority = 'high';
+  p.encodings[0].networkPriority = 'high';
+  sender.setParameters(p).catch(() => {});
+}
+
+function addVoiceToPeer(peer) {
+  const v = state.voice;
+  const track = v.stream.getAudioTracks()[0];
+  if (!track) return;
+  const sender = peer.pc.addTrack(track, v.stream);
+  applyVoiceParams(sender);
+  peer.senders.set(v.id, [sender]);
+}
+
+function sendVoiceState(to) {
+  const v = state.voice;
+  const m = { type: 'vstate', inVoice: !!v, muted: !!v?.muted, deaf: !!v?.deaf };
+  send(to ? { ...m, to } : m);
+}
+
+async function joinVoice() {
+  if (state.voice) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      video: false,
+    });
+  } catch (e) {
+    toast('Microfone bloqueado — libere em Configurações do Windows › Privacidade › Microfone');
+    return;
+  }
+  const track = stream.getAudioTracks()[0];
+  if (track) track.contentHint = 'speech';
+  state.voice = { id: stream.id, stream, muted: false, deaf: false, meter: null };
+  state.voice.meter = makeMeter(stream, (on) => setSpeaking(state.myName, on && !state.voice?.muted));
+  for (const peer of state.peers.values()) addVoiceToPeer(peer);
+  for (const v of state.voices.values()) v.audio.muted = false;
+  announceShares();
+  sendVoiceState();
+  chime('join');
+  renderVoice();
+  renderPeople();
+  if ($$('.tile.mine').length && state.cfg.share?.audio) toast('Dica: com "Som do PC" ligado, seus amigos podem ouvir a própria voz. Desligue se der eco.');
+}
+
+function leaveVoice(silent) {
+  const v = state.voice;
+  if (!v) return;
+  state.voice = null;
+  v.meter?.stop();
+  v.stream.getTracks().forEach((t) => t.stop());
+  for (const peer of state.peers.values()) {
+    for (const s of peer.senders.get(v.id) || []) { try { peer.pc.removeTrack(s); } catch {} }
+    peer.senders.delete(v.id);
+  }
+  for (const rv of state.voices.values()) rv.audio.muted = true;
+  setSpeaking(state.myName, false);
+  if (!silent) { announceShares(); sendVoiceState(); chime('leave'); }
+  renderVoice();
+  renderPeople();
+}
+
+function toggleMute() {
+  const v = state.voice;
+  if (!v) return joinVoice();
+  if (v.deaf) { toggleDeaf(); return; }
+  v.muted = !v.muted;
+  v.stream.getAudioTracks().forEach((t) => { t.enabled = !v.muted; });
+  if (v.muted) setSpeaking(state.myName, false);
+  chime(v.muted ? 'mute' : 'unmute');
+  sendVoiceState();
+  renderVoice();
+  renderPeople();
+}
+
+function toggleDeaf() {
+  const v = state.voice;
+  if (!v) return;
+  v.deaf = !v.deaf;
+  // ensurdecer também muta o microfone (igual ao Discord)
+  v.muted = v.deaf ? true : false;
+  v.stream.getAudioTracks().forEach((t) => { t.enabled = !v.muted; });
+  for (const rv of state.voices.values()) rv.audio.muted = v.deaf;
+  if (v.muted) setSpeaking(state.myName, false);
+  chime(v.deaf ? 'mute' : 'unmute');
+  sendVoiceState();
+  renderVoice();
+  renderPeople();
+}
+
+function attachVoice(from, stream) {
+  if (state.voices.has(stream.id)) return;
+  const audio = document.createElement('audio');
+  audio.autoplay = true;
+  audio.srcObject = stream;
+  audio.muted = !state.voice || state.voice.deaf; // só escuta quem também entrou na voz
+  document.body.appendChild(audio);
+  audio.play().catch(() => {});
+  const meter = makeMeter(stream, (on) => setSpeaking(from, on));
+  state.voices.set(stream.id, { from, stream, audio, meter });
+  stream.onremovetrack = () => { if (!stream.getTracks().length) removeVoice(stream.id); };
+  if (state.voice) chime('other');
+}
+
+function removeVoice(id) {
+  const v = state.voices.get(id);
+  if (!v) return;
+  state.voices.delete(id);
+  v.meter.stop();
+  v.audio.srcObject = null;
+  v.audio.remove();
+  setSpeaking(v.from, false);
+  if (state.voice) chime('leave');
+}
+
+function renderVoice() {
+  const v = state.voice;
+  const vb = $('#voiceBtn');
+  vb.classList.toggle('in', !!v);
+  vb.innerHTML = icon(v ? 'phone-off' : 'headset');
+  vb.title = v ? 'Sair da voz' : 'Entrar na voz';
+  $('#micBtn').classList.toggle('hidden', !v);
+  $('#deafBtn').classList.toggle('hidden', !v);
+  if (v) {
+    $('#micBtn').innerHTML = icon(v.muted ? 'mic-off' : 'mic');
+    $('#micBtn').classList.toggle('off', v.muted);
+    $('#micBtn').title = v.muted ? 'Desmutar (M)' : 'Mutar (M)';
+    $('#deafBtn').innerHTML = icon(v.deaf ? 'deaf' : 'headset');
+    $('#deafBtn').classList.toggle('off', v.deaf);
+    $('#deafBtn').title = v.deaf ? 'Ativar som' : 'Desativar som (ensurdecer)';
+  }
+}
+
+$('#voiceBtn').onclick = () => (state.voice ? leaveVoice() : joinVoice());
+$('#micBtn').onclick = toggleMute;
+$('#deafBtn').onclick = toggleDeaf;
+document.addEventListener('keydown', (e) => {
+  if ($('#room').classList.contains('hidden')) return;
+  if (e.target.closest && e.target.closest('input, textarea')) return;
+  if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); toggleMute(); }
+});
 
 $('#roomChip').onclick = () => {
   navigator.clipboard.writeText(state.cfg.room);

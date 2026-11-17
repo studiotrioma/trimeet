@@ -429,3 +429,20 @@ body.idle #stage { cursor: none; }
   transition: background 200ms ease, transform 100ms ease-out; }
 .home-btn:hover { background: rgba(255,255,255,.08); }
 .home-btn:active { transform: scale(.96); }
+
+/* ---------- voz ---------- */
+.voice-group { display: flex; gap: 6px; }
+.dock-sep { width: 1px; height: 26px; background: var(--hair-2); margin: 0 2px; }
+.dock .btn.voice { background: rgba(50, 215, 75, .14); color: var(--ok); }
+.dock .btn.voice:hover { background: rgba(50, 215, 75, .24); }
+.dock .btn.voice.in { background: rgba(255, 69, 58, .16); color: var(--live); }
+.dock .btn.voice.in:hover { background: rgba(255, 69, 58, .26); }
+.dock .btn.off { background: rgba(255, 69, 58, .16) !important; color: var(--live); }
+.voice-group .btn:not(.hidden) { animation: pop 420ms var(--spring-bounce) both; }
+.person .orb { transition: box-shadow 180ms ease, transform var(--d-bounce) var(--spring-bounce); }
+.person.speaking .orb { box-shadow: 0 0 0 2px var(--ok), 0 0 14px rgba(50, 215, 75, .55), inset 0 0 0 1px rgba(255,255,255,.35); }
+.person .vic { display: inline-flex; color: var(--text-3); }
+.person .vic:empty { display: none; }
+.person .vic .ic { width: 14px; height: 14px; }
+.person .vic.on { color: var(--ok); }
+.person .vic.mute, .person .vic.deaf { color: var(--live); }
